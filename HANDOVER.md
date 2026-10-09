@@ -1,0 +1,467 @@
+# 交接说明 —— 摄像头 + 大模型实时不文明行为识别
+
+> **读者**：接手这个项目的 AI 编程助手（Codex / Claude Code / 其他）以及后续的人。
+> **写法**：只写**已经实测确认**的事；没验证过的地方明确标 ❌，不含糊。
+> **日期**：2026-10-09（最近一次大改动就是这天）
+> **配套文档**（细节都在里面，本文只做索引与串联）：
+> - `WEBUI-可视化界面.md` —— 主设计文档 + 实测数据 + 踩坑表（**最详细，1084 行**）
+> - `PHASE1-开发流程.md` —— 命令行批处理流程与评测方法
+> - `phase1/README.md` —— 代码级用法（命令行 + 网页）
+> - `tju/11-cluster-connection.md` —— **怎么连集群、集群里有什么**（服务器侧速查）
+> - `tju/11b-credentials.md` —— 🔑 **含明文密码**（已在 `.gitignore` 里排除，勿外发）
+> - `tju/10-cluster-handover.md` —— 集群侧交接（更早的一份）
+
+---
+
+## 0. 30 秒上手：你现在要做什么
+
+```powershell
+# 1) 前提：连上学校 VPN（不连则集群完全不通，这是硬性前提）
+# 2) 拿到集群密码，设进环境变量（别写进命令行、别写进代码）
+$env:VLM_SSH_PASSWORD = '<见 tju/11b-credentials.md>'
+
+# 3) 零成本自检：不需要 GPU / VPN / 摄像头 / API Key
+cd E:\vibecoding\camera\phase1
+python -m civility.cli check          # 体检
+python -m civility.cli all            # 抽帧→推理(mock)→聚合→评测，看 runs/default/report.md
+
+# 4) 起可视化界面（⚠️ 必须由人自己在独立终端起，见 §5.1）
+python -m webui.server --port 8848    # → http://127.0.0.1:8848
+```
+
+**先做哪件事**：看第 8 节「下一步待办」，那里按性价比排好序了。
+**千万别先做的事**：不要在没读 §5 之前启动集群服务 —— 它在**按小时计费**。
+
+---
+
+## 1. 这个项目要解决什么
+
+在监控镜头上接一个大模型，**实时**判断画面里有没有不文明行为，并给出可解释的依据；
+行为种类要能**自定义**（改配置即可，不改代码）；前端要有一个**本地可视化网页**。
+后续阶段（未做）还要加语音/文字交互。
+
+**当前真正的交付形态**：一个本地网页（`localhost:8848`），后端把摄像头/RTSP/视频文件
+的窗口画面发给同济超算 A800 上的视觉大模型，模型返回逐窗口的结构化结论，
+网页**逐条**显示并据聚合规则产生告警。
+
+**行为定义现在有 5 条，启用 3 条**（`phase1/config/behaviors.yaml`）：
+
+| id | 名称 | 严重度 | 状态 |
+|---|---|---|---|
+| `littering` | 乱扔垃圾 | medium | ✅ 启用 |
+| `smoking` | 吸烟 | high | ✅ 启用 |
+| `queue_jumping` | 插队 | medium | ✅ 启用 |
+| `spitting` | 随地吐痰 | high | ⬜ 停用 |
+| `phone_while_driving` | 驾驶时使用手机 | high | ⬜ 停用 |
+
+加新行为**只改 `behaviors.yaml`，保存即热更新**（网页「行为定义」页可改），不用重启作业。
+
+---
+
+## 2. 硬件 / 平台 / 服务器（接手必须知道）
+
+### 2.1 推理服务器：同济大学超算 A800
+
+| 项 | 值 |
+|---|---|
+| 登录节点 | `logini.tongji.edu.cn`，端口 **10022**（不是 22） |
+| 备用 IP | `192.168.212.236`（logini01，首选）/ `192.168.212.245`（logini04） |
+| 账号 | `u00009`，密码见 `tju/11b-credentials.md` |
+| **前置条件** | **必须先连学校 VPN**。不连则 ping 100% 丢包、端口拒绝 —— 服务器无公网入口 |
+| 调度 | Slurm（`sbatch` / `squeue` / `scancel`） |
+| 分区 `A800` | 每节点 **8 × NVIDIA A800-SXM4-80GB**，共约 **19 个节点** |
+| 本项目占用 | **1 张卡**（`--gres=gpu:a800:1`），`cpus_per_task=4`、`mem=64g`、`time_limit=0-03:00:00` |
+| 计费（估算） | 项目内按 **4 元/卡时** 估算（`settings.yaml` 的 `service.gpu_price_per_hour`）；**以平台账单为准** |
+
+> ⚠️ **节点清单在 `tju/11-cluster-connection.md` 里自相矛盾**（L138 说
+> `gpu8001–8015 + gpu8017–8020，共 19 个，跳过 gpu8016`，L141 又说 `gpu8001-8020 = A800`）。
+> 两句话不可能同时对。**别照抄，自己跑一次确认真相**：
+> ```bash
+> sinfo -N -p A800 -o "%12N %8t %26G"     # 每节点一行，看真实节点名与状态
+> ```
+> 项目的 `settings.yaml` 里那份 `exclude_nodes` 是**实测驱动版本**得来的，可以信任。
+
+### 2.2 本机（开发机）
+
+Windows + PowerShell；Python 3.12.9（conda 环境）；关键依赖版本实测：
+`fastapi 0.140.0`、`uvicorn 0.51.0`、`opencv(cv2) 4.13.0`、`paramiko 5.0.0`、`pyyaml`、`requests`。
+`phase1/requirements.txt` 只列了最小集合（pyyaml/requests/paramiko），
+FastAPI/OpenCV 是网页与实时流另外需要的。**node** 也需要（用来跑前端 JS 的语法检查与节奏回归）。
+
+### 2.3 ⚠️ 三个"平台性"硬约束（不是选型偏好，是撞了墙才知道的）
+
+1. **集群上装不了 vLLM**。glibc 是 2.28，vLLM 装不上 → 只能用**纯 transformers** 推理。
+   这直接决定了性能天花板（见 §4.1）。
+2. **部分 A800 节点驱动过旧（550.54.14），torch 是 cu130 编译的（需 ≥580）**，
+   在这些节点上 `torch.cuda.is_available()` 返回 **False**。
+   必须 `--exclude`：`gpu8002,gpu8003,gpu8005,gpu8007,gpu8011,gpu8012,gpu8015`
+   （这份列表是**逐个实测 19 个节点**得来的，别凭记忆改）。
+   ⚠️ 症状很隐蔽：**作业能起来，只是 CUDA 不可用**。
+3. **计算节点没有公网**，登录节点又不许长期占用。
+   所以：网页跑在**本机**，模型跑在**计算节点作业**里，中间靠**两级 SSH 隧道**打通。
+
+---
+
+## 3. 技术路线与架构
+
+```
+浏览器 (localhost:8848)
+   │  HTTP / SSE / MJPEG
+   ▼
+本机 FastAPI（phase1/webui/server.py）
+   │  ① paramiko SSH → 登录节点 logini.tongji.edu.cn:10022
+   │  ② direct-tcpip 通道 → 计算节点:18080
+   ▼
+计算节点常驻服务（phase1/cluster/vlm_service.py）
+   │  ThreadingHTTPServer + 动态批量
+   ▼
+Qwen/Qwen3-VL-4B-Instruct（纯 transformers，CUDA，bf16）
+```
+
+### 3.1 为什么是这么分的
+
+- **本机负责"黏合与呈现"**：登录节点没装 web 框架、且禁止长期占用；计算节点是作业、会随作业结束消失。
+  本机跑 FastAPI + 浏览器直连最省事，服务器只负责"重"的部分（模型）。
+- **用 paramiko 的 `direct-tcpip` 而不是 `ssh -L`**：密码含 `}` `&`，在 shell 里转义极易出错。
+  paramiko 走参数传递，零转义风险，且天然覆盖"经登录节点跳到计算节点"。
+- **推理服务是"常驻作业"而不是"每次跑一个批作业"**：交互式监测要求随时能问模型。
+  代价是它**一直在计费**，所以配了一套成本守卫（§5.2）。
+
+### 3.2 处理流水线
+
+```
+视频源(摄像头/RTSP/文件)
+  → 采集"判断窗口"（默认 4 帧 / 2 秒窗口）
+  → 动作量门控（画面没动就不调模型，省卡时）
+  → 并发提交给计算节点（服务端动态批量，一次前向算多个窗口）
+  → 模型返回结构化 JSON（场景 / 逐人动作 / 逐行为 violations / 是否告警+理由）
+  → 时序聚合（三种策略）→ 告警
+  → SSE 逐条推到页面（按产出速率匀速铺开显示）
+```
+
+### 3.3 服务端"动态批量"（理解性能的关键）
+
+计算节点上跑 **3 个 worker 进程**（同一张卡，计费不变），每个 worker 内部有一个
+批量队列：把"几乎同时到达"的请求凑成一批，一次前向算完。
+网关（`cluster/vlm_gateway.py`）在它们前面轮询分摊请求，并按 `/health` 过滤掉
+"端口已开但模型还在加载"的 worker。
+
+**批量 8 的吞吐是单条的 4.0 倍**（微基准实测：1.96s/窗 → 0.49s/窗，聚合 114.2 tok/s）。
+这是这套栈**唯一**有效的吞吐提速手段（原因见 §4.1）。
+
+---
+
+## 4. 必须知道的性能事实（决定了很多设计）
+
+### 4.1 单流解码 ≈ 30 tok/s，没有配置可捡
+
+微基准（`phase1/cluster/vlm_bench.py` + `bench-vlm.sbatch`）排除了三类怀疑：
+dtype（bf16/fp16）、注意力后端、`device_map`，**全部无效**；
+`torch.compile(mode="reduce-overhead")` 也只从 17 → 31 tok/s。
+瓶颈是 **batch=1 时每步的固有成本**。所以：
+
+> **单窗口延迟 2~8 秒是下限，改不动。** 想更快要换推理栈，而 vLLM 装不了。
+
+### 4.2 实时性的主公式（2026-10-09 实测确认）
+
+```
+滞后 ≈ 攒批窗口数 × 窗口步长
+成本 ≈ 每窗均摊 GPU 秒（同一个旋钮，方向相反）
+```
+
+实测证据：用户实例日志显示每轮 16 秒里**推理只占 7 秒**，其余 9 秒纯粹在等采集
+把 8 个窗口凑齐。所以把 `continuous_batch_windows` 从 8 调到 2：
+
+| | 8 窗（旧） | 2 窗（现在） |
+|---|---|---|
+| 滞后 | 16 秒 | **约 4 秒** |
+| 每窗均摊 GPU 秒 | 0.875s | 约 0.9s（**几乎不变**） |
+
+**这是目前调实时性唯一的有效旋钮**，而且它在网页上可热改（①页「攒批窗口数」）。
+⚠️ 超过服务端批量上限（`VLM_BATCH_MAX=8`）之后是**纯亏**：攒批时间翻倍、吞吐不变。
+
+### 4.3 原理性下界（要如实告诉需求方）
+
+- **一个窗口必须等它走完，才能知道那几秒里发生了什么。** 所以"实时"最多到 **3 秒级**，
+  **做不到 1 秒内出结论**。想更近只能缩短窗口（更贵）或砍输出 token（试过，被明确否决）。
+- 现在：**首个结果约 5~6 秒出现，之后滞后约 4 秒**。旧配置是 15 秒 / 滞后 15 秒。
+
+### 4.4 当前生效的关键参数（想改先看这张表）
+
+| 参数 | 当前值 | 在哪 | 说明 |
+|---|---|---|---|
+| `live.window_stride_sec` | **2.0** | `settings.yaml` | 窗口时长。调大更省卡时但更滞后 |
+| `live.continuous_batch_windows` | **2** | 同上 | **实时性主旋钮**，滞后≈它×步长 |
+| `live.infer_workers` | **4** | 同上 | 本地并发请求数 |
+| `live.pipeline` | **true** | 同上 | 采集与推理重叠；关掉滞后几乎翻倍 |
+| `live.motion_gate` / `motion_threshold` | **true / 0.5** | 同上 | 画面没动就不调模型。⚠️ 分数**取决于取样间隔**，改步长必须重新标定 |
+| `extract.max_frames_per_window` | 4 | 同上 | |
+| `extract.max_side` / `fps` | 640 / 1.0 | 同上 | 640 是实测性价比点，再降会丢"手里有没有拿东西" |
+| `aggregate.mode` | **ai** | 同上 | 三选一：`immediate` / `ai` / `smoothed`，网页可切、无需重启 |
+| `aggregate.min_confidence` / `dedup_sec` | 0.45 / 30 | 同上 | |
+| `service.idle_release_min` / `max_run_hours` | 15 / 3 | 同上 | 成本守卫 |
+| `cluster.exclude_nodes` | 7 个节点 | 同上 | 驱动过旧，**别删** |
+
+---
+
+## 5. 操作纪律（这两条比代码更重要）
+
+### 5.1 网页服务必须由**人**在独立终端启动
+
+AI/工具沙箱启动的进程带**受限令牌**，Windows 会拒绝摄像头枚举 ——
+现象是"一个设备都找不到"，看起来像硬件坏了。
+（用户自己定位到这个根因，实测：沙箱 shell 里有 4 个受限 SID，用户自己的实例是 0 个。）
+
+```powershell
+# 由人执行：
+cd E:\vibecoding\camera\phase1
+python -m webui.server --port 8848
+```
+
+诊断：`python tools/token_probe.py`（有几个受限 SID）、
+`python tools/test_cam_perm.py`（提示语是否说真话）。
+
+> ⚠️ 注意：**代码改动在页面刷新后生效**，但 `settings.yaml` 里的默认值要**重启 webui** 才生效
+> （页面上的输入框会热改内存里的配置）。改完后端代码必须重启，否则会对着旧代码排查（踩过）。
+
+### 5.2 钱：A800 是按小时计费的，每次动手前后都要查
+
+```powershell
+$env:VLM_SSH_PASSWORD = '<密码>'
+python tools/cluster_cost.py             # 现在有没有作业在跑 + 已花多少
+python tools/cluster_cost.py --stop      # 一键停掉本项目所有作业
+python tools/cluster_usage.py --days 14  # 近两周用量与估算金额（对账用）
+```
+
+**真实教训（账单级）**：14 天里有一个 `civility-serve` 作业跑了 12 小时被 TIMEOUT，
+单它约 **12 GPU·小时 ≈ 48 元**，占那段时间全部花费的 **85%**。
+原因是网页重启后作业号丢失，集群上的作业成了没人管的**孤儿**。
+另有一次实测：一次误操作留下 2 个孤儿作业各跑约 30 分钟 ≈ **4 元**。
+
+所以：
+- 用完点「停止并释放节点」，或 `python tools/cluster_cost.py --stop`；
+- 服务启动约需 **115 秒**（3 个 worker 各加载模型），每次验证前想清楚值不值；
+- 一次"跑 N 个窗口的真模型自检"约 **0.1 元**（`tools/real_verify.py`，跑完自动释放）。
+
+---
+
+## 6. 已经做完并**实测验证**的部分
+
+| 能力 | 状态 | 证据 / 怎么复核 |
+|---|---|---|
+| 视频文件 → 抽帧 → 推理 → 聚合 → 评测 | ✅ | `python -m civility.cli all`；结果 `runs/default/report.md` |
+| 本地可视化网页（5 个页面区块） | ✅ | `python tools/check_ui.py`（结构）+ `check_js.py`（JS 语法） |
+| **AI 自己决定要不要告警**（带理由） | ✅ | `python tests/test_alert_modes.py`（三种策略） |
+| 自定义行为（改 YAML 即热更新） | ✅ | 坏 YAML 被拒；保存后热推送生效 |
+| 摄像头/RTSP 持续监测全链路 | ✅ | `python tools/test_monitor_rtsp.py`（**9 项断言**，自建 RTSP 源） |
+| **批量流水线**（结论间隔 6~8 秒 → 1.44 秒） | ✅ | `python tools/test_batch_pipeline.py`（真模型 + 真实摄像头流）。⚠️ README 里记的是"**16/16 零失败**"，那是**改造当次**的实测记录（见 `README.md:21`），**本次交接没有重跑过** |
+| **逐条显示**（不要一批蹦出来） | ✅ | `python tools/test_pace_reveal.py`（用 node 跑页面里**真实的**函数；中位=最大间隔 1450ms） |
+| **缩略图显示"AI 真正看的那一帧"** | ✅ | `python tools/test_frame_index.py` + `test_thumb_url.py` + `test_frame_cache.py`（端到端：3 个窗口 3 张不同字节的图） |
+| 动作量门控（静止不调模型） | ✅ | `python tools/test_motion_gate.py`（静止跳过 24/26，移动 0 跳过） |
+| 成本守卫（空闲释放/最长运行/孤儿检查） | ✅ | `python tools/test_cost_watchdog.py`（**12 项断言**，用压缩到秒级的时间条件实测） |
+| 集群多 worker + 网关 | ✅ | `python tools/test_vlm_gateway.py` |
+| 真模型在真实素材上的识别 | ✅ | 真实工地素材 **3/3 命中"吸烟 95%"** + 2 条带理由告警；工具 `tools/real_verify.py`。⚠️ **只有 3 个窗口**，样本极小，别当准确率 |
+| 集群推理微基准（查清"慢在哪"） | ✅ | `tools/run_cluster_job.py cluster/bench-vlm.sbatch`；结论见 §4.1 |
+
+**模型能力边界（`tools/verify_visible.py`，4/4 通过）**：
+
+| 用例 | 结果 |
+|---|---|
+| 读出中文标牌「停车场 3 号门」 | ✅ 完全正确（OCR 可信） |
+| 人走过垃圾桶 | ✅ 看见且**不**误报 |
+| 丢物到地上 | ✅ 认出丢弃动作、理解跨帧变化 |
+| 空场景 | ✅ 全 false，没有无中生有 |
+
+> ⚠️ **但有一条必须知道的局限**：在"人明显在走"的视频上，模型把 scene 描述成
+> "人形站在桶旁**静止**"，而像素自检显示 139/139 帧都在变。
+> → **运动方向/速度这类描述不可信**。判断行为请以 `observable` 里的**动作链条**为准，
+> 不要以 `scene` 里的运动词为准。
+
+---
+
+## 7. 已知问题与未验证项（**不要当成已完成**）
+
+### 7.1 明确未验证 ❌
+
+| 项目 | 状态 | 为什么 / 卡在哪 |
+|---|---|---|
+| **本机摄像头打开** | ❌ 未验证 | 开发机没有可用摄像头（`0`/`1` 都打不开）。**需要一台有摄像头的机器** |
+| **真实 IP 摄像头的认证/URL 格式** | ❌ 未验证 | 需要真实设备。已内置常见品牌 URL 模板，探测失败时会把候选直接显示出来 |
+| **云端后端（`backend: cloud`）** | ❌ 未验证 | 代码支持（`DASHSCOPE_API_KEY` + OpenAI 兼容端点，配置见 `PHASE1-开发流程.md` 步骤 7），也是原计划的"调 Prompt 主力"，但**在现有验证记录里找不到真跑成功的证据** —— 当前所有实测都走集群或 mock。要用得先自己确认 key 与端点 |
+| **真实监控画面上的准确率** | ❌ 未验证 | 手上只有合成视频 + 自建 RTSP 源 + 一段真实工地素材。**这是最大的空白** |
+| 运动描述准确性 | ❌ 已知不准 | 见 §6 末尾 |
+| 多分片 RTSP（MJPEG） | ❌ 未打通 | 自建 MJPEG 服务器的分片打包过不了 ffmpeg 解包器（四种 offset 写法穷举均失败）。**真实 IP 摄像头多为 H.264，走的是已验证的那条路，所以不影响真实设备** |
+| 语音/文字交互 | ⬜ 未做 | 属于第三阶段 |
+
+### 7.2 已知缺陷 / 待改进
+
+1. **`tools/bench_batch_lag.py` 没有实测数据**：它的目的是量出"批量 → 延迟/成本"整条曲线
+   （现在只有批量 8 的微基准数据点）。工具写好了，但自建隧道连计算节点被拒
+   （`隧道自测失败：ChannelException(2, 'Connect failed')`，而 webui 那条隧道是通的），
+   当时为了不额外花模型加载成本就没再追。**这个工具需要先修通隧道再跑。**
+2. **真模型在真实监控画面上的动作描述质量仍是空白** —— 全项目最该先补的一块。
+3. **主设计文档 `WEBUI-可视化界面.md` 里曾散落着好几处"旧架构"的数字**
+   （"延迟 5.5 秒/窗口"、"步长不能小于 5.5–12 秒"、"把步长调到 12 秒以上"），
+   都是批量流水线改造**之前**的结论，与现行的"攒批 2 × 步长 2 ≈ 4 秒"直接矛盾。
+   **这些是移交时踩到的真实问题**：注释/文档没跟着默认值一起改，
+   读者会按旧数字去设参数、然后困惑为什么对不上。
+   本次已修正的位置：
+   - ① 页"窗口步长"说明（§5）—— 改成"判据是步长 ≥ **每窗均摊** GPU 秒"，并附新旧对照表
+   - §7「当前限制」第 1 条 —— 改成"滞后 ≈ 攒批 × 步长"
+   - §7「下一步建议」第 1 条 —— 去掉"必须调到 12 秒以上"
+   - §7 未验证表 —— "AI 动作描述效果"从 ❌ 改成 ⚠️ 部分验证（真模型已在真实素材上命中）
+   **但那份文档有 1105 行、历史结论很多，读到任何数字时都以本文 §4.4 为准。**
+4. 演示模式（`use_mock`）的结论是**假的**（本地假模型），页面会常驻横幅标注，别拿它判断准确率。
+5. 合成视频**不能替代**真实画面：能证明"看得见、认得出丢弃、不误报"，
+   但真实监控的遮挡、光照、人群密度都不在里面。
+
+---
+
+## 8. 下一步待办（按性价比排序）
+
+1. **补上真实监控画面的准确率**（最重要）。
+   录一段真实场景视频（手机 30 秒即可），用「视频文件分析」页跑一遍。
+   这是判断"能不能用"的唯一办法，而且几乎不花钱（文件分析只在本地+推理服务）。
+2. **VPN 恢复后在真实摄像头/RTSP 上跑一次持续监测**，看 `people` 里的动作描述
+   是否具体、`changed` 是否真的反映动作变化。用 `tools/real_verify.py --source <源>`，
+   约 0.1 元、跑完自动释放。
+3. **接真实 RTSP 摄像头**：拿到地址后填进监测页即可 —— 代码路径与自建 RTSP 源**完全相同**
+   （已验通）。⚠️ 真实设备多为 H.264，别用 §7.1 里那条 MJPEG 分片的坑去推测它。
+4. **修通 `bench_batch_lag.py` 的隧道**，把"批量 → 滞后/成本"曲线量出来，
+   用来给"实时 vs 省钱"定一个有数据支撑的默认值。
+5. 需要更快/更省，可以试 `Qwen/Qwen3-VL-2B-Instruct`（服务页下拉框已支持），
+   用同一批视频对比准确率再决定值不值得。
+6. 语音交互（第三阶段，未开始）。
+
+---
+
+## 9. 仓库结构（只看会用到的）
+
+```
+E:\vibecoding\camera\
+├─ HANDOVER.md                    ← 本文
+├─ WEBUI-可视化界面.md              ← 主设计文档 + 实测数据 + 踩坑表（最详细）
+├─ PHASE1-开发流程.md               ← 命令行批处理流程与评测
+├─ README.md                      ← 项目总览 + 能做什么
+├─ tju\                           ← 集群侧：连接方式、凭据、集群交接
+└─ phase1\
+   ├─ config\
+   │   ├─ settings.yaml           ← ★ 所有开关（后端、抽帧、实时、聚合、成本守卫、集群）
+   │   └─ behaviors.yaml          ← ★ 行为定义（改这里就能加行为）
+   ├─ civility\                   ← 核心库：config/prompts/vlm/extract/aggregate/score
+   │   └─ prompts.py              ← ★ Prompt 与输出 Schema（输出瘦身都在这里）
+   ├─ webui\
+   │   ├─ server.py               ← ★ 本机 FastAPI 后端（采集/推理/SSE/告警/成本守卫）
+   │   ├─ capture.py              ← 采集：StreamReader / 窗口切分 / 动作量门控
+   │   ├─ cluster_client.py       ← 作业提交、节点发现、两级隧道
+   │   ├─ winenv.py               ← Windows 权限诊断（受限令牌 → 摄像头找不到）
+   │   ├─ static\index.html       ← ★ 单页前端（约 1249 行，含逐条显示节奏器）
+   │   └─ last_port.txt           ← 实际监听端口（被占时会自动顺延）
+   ├─ cluster\                    ← 跑在计算节点上的东西
+   │   ├─ vlm_service.py          ← ★ 常驻推理服务 + 动态批量队列
+   │   ├─ vlm_gateway.py          ← 多 worker 轮询网关
+   │   ├─ serve-vlm.sbatch        ← ★ 启动 3 worker + 网关的作业脚本
+   │   ├─ bench-vlm.sbatch        ← 微基准作业
+   │   └─ run-vlm.sbatch          ← 批推理作业
+   ├─ tools\                      ← 诊断/测试/运维脚本（其中 23 个是 test_/check_/diag_ 开头）
+   ├─ tests\                      ← 4 个套件（capture / alert_modes / actions / cluster import）
+   └─ runs\                       ← 产出：报告、演示流、日志（示例素材在这里）
+```
+
+**最容易找错地方的**：测试脚本**分散在两个目录** ——
+`phase1/tools/`（23 个以 `test_`/`check_`/`diag_` 开头的）和 `phase1/tests/`（4 个）。
+（我自己就曾用 `tools\test_capture.py` 去找一个其实在 `tests\` 下的文件。）
+可以这样列全（别凭记忆）：
+```powershell
+Get-ChildItem phase1\tools -Filter *.py | Where-Object Name -match '^(test_|check_|diag_)' | Select Name
+Get-ChildItem phase1\tests -Filter *.py | Select Name
+```
+
+### 9.1 常用命令速查
+
+```powershell
+# 自检（零成本）
+python -m civility.cli check / prompt / all
+python tests\test_capture.py ; python tests\test_alert_modes.py ; python tests\test_actions.py
+python tests\smoke_cluster_import.py        # 改完源码要先跑这个（它测的是作业包里的副本）
+
+# 网页相关
+python tools\check_js.py                    # 前端 JS 语法（语法错会整页不执行！）
+python tools\check_ui.py                    # 前端结构（id/按钮/接口/事件）
+python tools\test_pace_reveal.py            # 逐条显示的节奏
+python tools\test_frame_index.py            # 帧号映射
+python tools\test_thumb_url.py              # 缩略图 URL 与缓存
+python tools\test_frame_cache.py            # 端到端：不同窗口必须是不同的图
+
+# 集群（花钱，动手前后都要查）
+python tools\cluster_probe.py               # 探集群状态
+python tools\cluster_cost.py [--stop]       # 查/停计费
+python tools\real_verify.py --windows 3     # 真模型低成本自检（跑完自动释放）
+python tools\run_cluster_job.py cluster/bench-vlm.sbatch --export "CONFIGS=B+F+G"
+python tools\watch_jobs.py                  # 看作业是否真的停了（避免孤儿）
+
+# 没有摄像头/VPN 也能验证（重要）
+python tools\mini_rtsp_h264.py --h264 runs\demo_cam.h264 --port 8555 --fps 20
+#   → 监测页填 rtsp://127.0.0.1:8555/live（走的是和真实摄像头完全相同的代码路径）
+```
+
+---
+
+## 10. 交接时最该先读的 10 条坑（都是实测踩出来的，完整表在 `WEBUI-可视化界面.md` §4）
+
+1. **部分 A800 节点驱动过旧** → `torch.cuda.is_available()` 返回 False。症状隐蔽：作业能起来，只是 CUDA 不可用。必须 `--exclude`（列表见 §2.3）。
+2. **`srun -w <node>` 报"每 GPU 不超过 7 核"** → 平台按 `ntasks × cpus-per-task` 算核数，`srun` 默认 `ntasks=2`。必须写 `-n1 -c7`。
+3. **服务必须绑 `0.0.0.0`**，绑回环则登录节点连过来被拒、隧道建不起来。
+4. **裸 `.h264` 的 `CAP_PROP_FRAME_COUNT` 是荒谬负数**（实测 `-153722867280913`）→ 文件源按帧号跳转全部失败 → **0 个窗口 + 无限重连**。已加顺序读回退；测试素材优先用有容器的 `.mp4`。
+5. **`os.replace` 覆盖"正被 HTTP 读着"的文件会 `PermissionError`** → 预览图永远不动，而磁盘上明明在写（异常被 `except: pass` 吞掉）。改成每帧一个新文件名。
+6. **帧号不能靠时间戳推算** → `int(t_start)` 只在"步长 == 帧间隔"时才对；实测步长 6 秒时取第 6 帧，真实是第 3 帧。**错了不报错，只是静默显示错误的画面**。
+7. **缩略图 URL 不带缓存破坏参数 + 接口不发缓存头 = 浏览器复用第一张** → 用户原话"图片始终是同一张"。
+8. **`squeue --export=A=1,B=2` 的逗号是变量分隔符** → 传列表要用 `+`，脚本里再换逗号。
+9. **改了远端 `.py` 但效果不变** → 进程里模块已缓存，要 `importlib.reload`；且 `tests/smoke_cluster_import.py` 测的是 `runs/cluster/pkg` 里那份**副本**，改完源码要先 `cluster-prepare`。
+10. **默认值改了、注释和测试没跟上** → 注释还写"8 窗 = 8 秒"、说明还写"步长不能小于 12 秒"，读者按旧数字理解实时性。**改默认值时全仓搜一遍相关注释**；测试里要**显式**设置自己用的值，别依赖默认值。
+
+---
+
+## 11. 给接手 AI 的工作约定（这些是需求方明确表达过的偏好）
+
+1. **先给方案、批准后再改**。需求方明确要求过这个节奏，尤其涉及"要花钱"或"改主循环"的改动。
+2. **不要减输出 token**（需求方认为"token 出来速度太慢"是主因，已明确否决砍 token 这条路）。
+3. **要逐条显示，不要一批一起蹦**（已实现匀速节奏器 `paceDelayFor`，改动时别破坏它）。
+4. **数字要有证据**。这个项目的文档里每个性能数字后面都有工具和命令。
+   写结论时区分"实测"和"推测"——需求方对含糊表述敏感（"能不能确保"是他的原话）。
+5. **凡是 UI 上给用户看的解释，必须说真话**。踩过两次：
+   摄像头找不到被说成"可能被其他程序占用"（其实是权限）、
+   窗口步长说明写着一个已经废弃的架构数字。提示语说错话比不提示更糟。
+6. **测试要跑页面/服务端里真实的代码**，不要在测试里重写一份实现
+   （`test_pace_reveal.py` 和 `test_thumb_url.py` 用 node 抠出页面的真函数来跑，就是这个原因）。
+
+---
+
+## 附：环境变量与**仓库外的依赖**（容易漏）
+
+### 环境变量
+
+| 变量 | 用途 | 说明 |
+|---|---|---|
+| `VLM_SSH_PASSWORD` | 连集群的密码 | 见 `tju/11b-credentials.md`。**不要写进命令行、不要写进代码**（含 `}` `&`，shell 转义容易出错） |
+| `DASHSCOPE_API_KEY` | 云端后端（`backend: cloud`） | 可选。第一阶段主力曾用运行 Prompt 迭代；现在主用集群 |
+| `CIVILITY_MOCK_LATENCY` | 给本地假模型加人为延迟 | **仅供诊断**，用来复现"推理要好几秒"的节奏 |
+| `CIVILITY_SETTINGS` | 指向另一份 `settings.yaml` | 测试用，做**隔离实例**（避免写进正在用的 `data/frames/`） |
+| `CIVILITY_NO_READER` | 关掉读帧线程 | A/B 对比诊断用，正常运行**不要设** |
+| `VLM_WORKERS` | 服务起几个 worker | 默认 3。同一张卡，计费不变 |
+| `VLM_TOOLS_DIR` | `cluster.py` 所在目录 | 默认见下 |
+
+### ⚠️ 这个项目**依赖仓库外的一个目录**：`E:\vibecoding\aipc\`
+
+| 依赖 | 路径 | 用在哪 |
+|---|---|---|
+| `tools\cluster.py` | `E:\vibecoding\aipc\tools\cluster.py` | paramiko 封装（SSH / SFTP / 作业提交）。**本项目所有连集群的代码都靠它**，缺失则一切集群操作失败 |
+| `docs\03-tongji-a800-deploy.md` | `E:\vibecoding\aipc\docs\` | `PHASE1-开发流程.md` 引用的部署文档 |
+
+这个路径**硬编码在两处**：`phase1/config/settings.yaml` 的 `cluster.tools_dir`，
+以及 `webui/cluster_client.py` 的 `_tools_dir()`（可用环境变量 `VLM_TOOLS_DIR` 覆盖）。
+**换机器/换目录时必须改这里** —— 报错信息是 `找不到 ...\cluster.py`，不会被误认为别的问题。
+
+**复制项目给接手方时**：这两个文件（或整个 `aipc` 目录）要一起给，
+否则集群相关功能全部不可用。另外 `tju/11b-credentials.md` 是**唯一存密码的地方**，
+按仓库 `.gitignore` 的约定它不进版本库 —— 交接要走别的渠道给。

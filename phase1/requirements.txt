@@ -1,0 +1,10 @@
+# 依赖（第一阶段，本地跑通链路所需的最小集合）
+# 安装：pip install -r requirements.txt
+
+pyyaml>=6.0          # 读取 behaviors.yaml / settings.yaml
+requests>=2.31       # 云端 OpenAI 兼容接口调用
+paramiko>=3.4        # 访问同济 A800（只有走集群后端时才需要）
+
+# 以下为可选，按需安装：
+# pillow             # 帧拼接回退（stitch_frames: true）时需要
+#                    # ⚠️ 集群侧的 vlm 环境里已有 Pillow 12.3.0

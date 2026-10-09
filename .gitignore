@@ -1,0 +1,83 @@
+# ══════════════════════════════════════════════════════════════════════
+#  ⚠️ 凭据 —— 绝对不能提交
+# ══════════════════════════════════════════════════════════════════════
+# tju/11b-credentials.md 里有**明文密码**（集群登录凭据）。它必须只存在于本机。
+tju/11b-credentials.md
+tju/*credentials*
+**/*credentials*.md
+**/*secret*
+**/*.key
+.env
+.env.*
+
+# ══════════════════════════════════════════════════════════════════════
+#  运行产物：可重新生成，或体积大 / 含本机数据
+# ══════════════════════════════════════════════════════════════════════
+# 抽帧结果：持续监测一小时能产几千张图（实测 2157 张 / 56 MB）
+phase1/data/frames/
+# 网页上传的视频（本机数据，77 MB）
+phase1/data/uploads/
+# 真实素材：版权与体积都不适合公开（10.5 MB 的工地视频 + 3.2 MB 片段）。
+# ⚠️ 排除它的代价：`tools/make_demo_stream.py` 无法重新生成 runs/demo_*.h264。
+#    但那些演示流**已经提交**了，所以测试不受影响（见下方白名单）。
+phase1/data/real/
+# 流水线的中间契约文件（由抽帧重新生成）
+phase1/data/manifest.jsonl
+
+# 任务产出：报告、评测结果
+phase1/runs/default/
+# 打包上传集群用的作业包（由 civility/ 源码打包，见 cluster-prepare）
+phase1/runs/cluster/
+# 测试/诊断跑出来的临时目录与日志（约定以 _ 开头，且测试会自己清理）
+phase1/runs/_*
+# ⚠️ 这是**运行产物**：webui 启动时把实际监听端口写进去（被占时会自动顺延）。
+#    提交它会让克隆下来的人以为"服务就该是 8848"。
+#    读它的工具（real_verify / service_up / who_is_running …）在文件不存在时
+#    都会回退到默认 8848，所以不提交不影响使用。
+phase1/webui/last_port.txt
+# ⚠️ 这条是踩过才加的：tools/ 下的测试脚本会把 stdout 重定向到 `_*.log` / `_*.txt`
+#    做留档，实测攒了 31 个（约 200 KB）都被提交进去了。
+#    它们对读代码的人没有价值，只会让仓库显得脏。
+#    以 `_` 开头的还有诊断脚本产出的图片（如顶层的 tools/_cam_probe.jpg），同样是产物。
+tools/_*.log
+tools/_*.txt
+tools/_*.jpg
+phase1/tools/_*.log
+phase1/tools/_*.txt
+phase1/tools/_*.jpg
+
+# ⚠️⚠️ 但下面这些**必须留** —— 多个测试与文档直接引用，
+#      缺了会报 "No such file"，而那看起来像代码坏了：
+#          runs/demo_cam.h264     真实工地画面（tools/diag_* / test_frame_cache 用它）
+#          runs/demo_cam.mp4      同上，有容器所以帧数元数据可靠
+#          runs/demo_litter.h264  含完整"丢垃圾"动作
+#          runs/demo_static.h264  静止画面（用于验证动作量门控）
+#          runs/_ref.h264         mini_rtsp_h264 的默认素材
+!phase1/runs/demo_cam.h264
+!phase1/runs/demo_cam.mp4
+!phase1/runs/demo_litter.h264
+!phase1/runs/demo_static.h264
+!phase1/runs/_ref.h264
+# 微基准结果与 Prompt 预览是有价值的实测记录，也留
+!phase1/runs/bench_result.json
+!phase1/runs/prompt-preview.txt
+
+# ══════════════════════════════════════════════════════════════════════
+#  Python
+# ══════════════════════════════════════════════════════════════════════
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# ══════════════════════════════════════════════════════════════════════
+#  编辑器 / 系统
+# ══════════════════════════════════════════════════════════════════════
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini

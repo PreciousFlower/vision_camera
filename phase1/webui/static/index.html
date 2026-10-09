@@ -1,0 +1,1254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智巡 · 视频行为分析平台</title>
+<style>
+:root{
+  --bg:#0b0e14; --bg2:#11151d; --panel:#151a24; --panel2:#1b2130; --line:#232b3a;
+  --fg:#e8ecf4; --fg2:#a8b3c7; --dim:#6b7789; --accent:#3b82f6; --accent2:#60a5fa;
+  --ok:#22c55e; --warn:#f59e0b; --err:#ef4444; --hit:#f87171; --purple:#8b5cf6;
+  --r:10px; --r2:14px;
+  --sh:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -8px rgba(0,0,0,.5);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:14px/1.6 "Microsoft YaHei","PingFang SC",system-ui,-apple-system,sans-serif;
+  -webkit-font-smoothing:antialiased}
+
+/* 顶栏 */
+header{height:58px;padding:0 22px;display:flex;align-items:center;gap:14px;
+  background:linear-gradient(180deg,#131824,#0f131c);
+  border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+.logo{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px}
+.logo .mark{width:26px;height:26px;border-radius:7px;
+  background:linear-gradient(135deg,var(--accent),var(--purple));
+  display:grid;place-items:center;font-size:14px}
+.logo .sub{font-size:11px;color:var(--dim);font-weight:400;margin-left:6px}
+.spacer{flex:1}
+.chip{font-size:11.5px;padding:4px 11px;border-radius:999px;background:var(--panel2);
+  border:1px solid var(--line);color:var(--fg2);display:inline-flex;align-items:center;
+  gap:6px;white-space:nowrap}
+.chip .dot{width:6px;height:6px;border-radius:50%;background:var(--dim)}
+.chip.ok{color:#86efac;border-color:#1d4030;background:#0f1f19}
+.chip.ok .dot{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.chip.err{color:#fca5a5;border-color:#4a1f22;background:#1e1213}
+.chip.err .dot{background:var(--err)}
+.chip.warn{color:#fcd34d;border-color:#4a3a16;background:#1e1a0f}
+.chip.warn .dot{background:var(--warn)}
+
+/* 侧栏 + 内容 */
+.shell{display:flex;min-height:calc(100vh - 58px)}
+aside{width:196px;flex:0 0 196px;background:var(--bg2);border-right:1px solid var(--line);
+  padding:14px 10px;position:sticky;top:58px;height:calc(100vh - 58px);overflow:auto}
+aside button{display:flex;align-items:center;gap:10px;width:100%;background:none;border:none;
+  color:var(--fg2);padding:9px 12px;border-radius:8px;cursor:pointer;font-size:13.5px;
+  text-align:left;margin-bottom:3px;transition:.14s}
+aside button:hover{background:var(--panel2);color:var(--fg)}
+aside button.active{background:linear-gradient(90deg,rgba(59,130,246,.16),rgba(59,130,246,.04));
+  color:#fff;box-shadow:inset 2px 0 0 var(--accent)}
+aside button .ic{width:17px;text-align:center}
+aside .grp{font-size:10.5px;color:var(--dim);padding:14px 12px 6px;letter-spacing:.8px}
+main{flex:1;min-width:0;padding:20px 24px 64px;max-width:1320px}
+
+/* 卡片 */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r2);
+  padding:18px 20px;margin-bottom:16px;box-shadow:var(--sh)}
+.card h3{margin:0 0 4px;font-size:14.5px;font-weight:600;display:flex;align-items:center;gap:8px}
+.card h3 .hint{font-size:12px;color:var(--dim);font-weight:400}
+.card > p.lead{margin:0 0 14px;color:var(--fg2);font-size:13px}
+.grid{display:grid;gap:16px}
+.g2{grid-template-columns:1fr 1fr}
+.g-2-1{grid-template-columns:1.6fr 1fr}
+@media(max-width:1080px){.g2,.g-2-1{grid-template-columns:1fr}}
+
+/* 控件 */
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.btn{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px 17px;
+  cursor:pointer;font-size:13px;font-weight:500;transition:.14s;white-space:nowrap}
+.btn:hover{background:var(--accent2)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.ghost{background:var(--panel2);border:1px solid var(--line);color:var(--fg)}
+.btn.ghost:hover{background:#232b3a}
+.btn.lg{padding:11px 22px;font-size:14px}
+.btn.sm{padding:5px 12px;font-size:12px;border-radius:6px}
+input[type=text],select,textarea{background:#0d1117;color:var(--fg);border:1px solid var(--line);
+  border-radius:8px;padding:9px 12px;font-size:13px;font-family:inherit;transition:.14s}
+input[type=text]:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px rgba(59,130,246,.14)}
+input[type=text]::placeholder{color:var(--dim)}
+label.f{display:flex;flex-direction:column;gap:5px;font-size:11.5px;color:var(--dim)}
+label.f input{width:100%}
+label.inline{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--fg2)}
+label.inline input{width:62px}
+pre{background:#0a0d13;border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;
+  overflow:auto;font:12px/1.6 Consolas,"Courier New",monospace;color:var(--fg2);
+  max-height:300px;margin:0;white-space:pre-wrap;word-break:break-word}
+code{background:var(--panel2);padding:1px 6px;border-radius:5px;font-size:12px;color:var(--accent2)}
+.muted{color:var(--dim)}
+
+/* 指标 */
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:12px}
+.metric{background:var(--panel2);border:1px solid var(--line);border-radius:var(--r);padding:13px 15px}
+.metric .k{font-size:11px;color:var(--dim);letter-spacing:.4px;margin-bottom:3px}
+.metric .v{font-size:22px;font-weight:600;line-height:1.2;font-variant-numeric:tabular-nums}
+.metric .v.sm{font-size:15px;font-weight:500}
+
+/* 进度 */
+.bar{height:6px;background:#0d1117;border-radius:999px;overflow:hidden;margin:12px 0 7px}
+.bar > i{display:block;height:100%;width:0;border-radius:999px;
+  background:linear-gradient(90deg,var(--accent),var(--purple));transition:width .4s ease}
+
+/* 动作卡片 */
+.feed{display:flex;flex-direction:column;gap:10px;max-height:660px;overflow:auto;padding-right:4px}
+.act{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--accent);
+  border-radius:0 var(--r) var(--r) 0;padding:12px 14px;animation:slide .28s ease}
+.act.hit{border-left-color:var(--hit);background:#1d1416}
+.act .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;
+  color:var(--dim);margin-bottom:8px}
+.act .top .t{color:var(--fg2);font-weight:600;font-variant-numeric:tabular-nums}
+.person{display:flex;gap:9px;align-items:flex-start;padding:7px 0;border-top:1px dashed var(--line)}
+.person:first-of-type{border-top:none}
+.person .pin{flex:0 0 auto;width:20px;height:20px;border-radius:50%;background:var(--accent);
+  color:#fff;font-size:11px;display:grid;place-items:center;font-weight:600;margin-top:1px}
+.person .body{min-width:0}
+.person .where{font-size:11.5px;color:var(--dim)}
+.person .doing{font-size:13.5px;color:var(--fg)}
+.person .chg{font-size:11.5px;color:var(--accent2);margin-top:1px}
+.tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-left:6px;
+  background:#3a2020;color:#ff9d95}
+.tag.sev-high{background:#4a1a1a;color:#ff8a80}
+.tag.sev-medium{background:#40371a;color:#e3c05c}
+.tag.sev-low{background:#1f3a2a;color:#86efac}
+.thumb{width:96px;height:54px;object-fit:cover;border-radius:6px;border:1px solid var(--line);
+  cursor:pointer;transition:.14s;flex:0 0 auto}
+.thumb:hover{border-color:var(--accent)}
+.thumb.big{width:100%;height:auto;max-height:420px}
+
+/* 告警 */
+.alert{background:#1d1416;border:1px solid #4a2024;border-radius:var(--r);padding:13px 15px;
+  margin-bottom:10px;animation:slide .28s ease}
+.alert .t{font-weight:600;color:#ff9d95;margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.alert .meta{font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
+.alert .reason{font-size:12.5px;color:var(--accent2);margin-top:7px;
+  background:rgba(59,130,246,.08);padding:7px 10px;border-radius:6px}
+.alert .ev{font-size:12px;color:var(--fg2);margin-top:5px;padding-left:2px}
+
+/* 上传 */
+.drop{border:2px dashed var(--line);border-radius:var(--r2);padding:36px 20px;text-align:center;
+  color:var(--dim);cursor:pointer;transition:.16s;background:#0d1117}
+.drop:hover,.drop.over{border-color:var(--accent);color:var(--fg);background:#101725}
+
+/* 提示 */
+.flashes{position:fixed;right:20px;bottom:20px;z-index:99;display:flex;flex-direction:column;gap:9px}
+.flash{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--accent);
+  padding:11px 16px;border-radius:var(--r);font-size:13px;max-width:400px;box-shadow:var(--sh);
+  animation:slide .22s ease}
+.flash.err{border-left-color:var(--err)}.flash.ok{border-left-color:var(--ok)}
+.flash.warn{border-left-color:var(--warn)}
+/* 勾选项（模拟验证这类"不影响主流程但要知道"的开关） */
+label.chk{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--dim);
+  cursor:pointer;user-select:none;padding:0 2px}
+label.chk input{width:15px;height:15px;accent-color:var(--accent);cursor:pointer}
+label.chk:hover{color:var(--fg)}
+/* 成本横幅：孤儿作业 / 自动释放。红=还在烧钱，黄=已自动释放 */
+.costbar{margin-bottom:16px;padding:13px 16px;border-radius:var(--r);font-size:13px;
+  background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.35);
+  display:flex;flex-direction:column;gap:9px;line-height:1.7}
+.costbar.danger{background:rgba(239,68,68,.11);border-color:rgba(239,68,68,.4)}
+.costbar b{color:var(--fg)}
+/* 实时画面：画中画式黑底显示，未开始时给出说明而不是一片空白 */
+.livebox{position:relative;background:#07090d;border:1px solid var(--line);
+  border-radius:var(--r);min-height:190px;display:flex;align-items:center;
+  justify-content:center;overflow:hidden}
+.livebox img{display:none;width:100%;height:auto;cursor:zoom-in}
+.livebox img.big{position:fixed;inset:5vh 5vw;width:90vw;height:90vh;object-fit:contain;
+  z-index:120;background:#000;border:1px solid var(--line);border-radius:var(--r);cursor:zoom-out}
+.livebox .ph{color:var(--dim);font-size:12.5px;line-height:1.7;padding:26px;text-align:center}
+/* 模型判定帧：小图，边框标出"这是 AI 看到的" */
+img.evid{width:100%;border:1px solid var(--line);border-radius:var(--r);background:#07090d;
+  cursor:zoom-in;display:block}
+img.evid.big{position:fixed;inset:5vh 5vw;width:90vw;height:90vh;object-fit:contain;
+  z-index:120;background:#000;cursor:zoom-out}
+@keyframes slide{from{opacity:0;transform:translateX(14px)}}
+section{display:none}section.active{display:block;animation:fade .2s ease}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}}
+.note{background:rgba(59,130,246,.07);border:1px solid rgba(59,130,246,.2);border-radius:var(--r);
+  padding:11px 14px;font-size:12.5px;color:var(--fg2);line-height:1.75}
+.note.warn{background:rgba(245,158,11,.07);border-color:rgba(245,158,11,.22)}
+.kv{font-size:12.5px;color:var(--dim);line-height:1.95}
+.kv b{color:var(--fg);font-weight:500}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#2a3346;border-radius:5px}
+::-webkit-scrollbar-thumb:hover{background:#374256}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <span class="mark">🛡</span>
+    <span>智巡<span class="sub">视频行为分析平台</span></span>
+  </div>
+  <span class="spacer"></span>
+  <span class="chip" id="c-vpn"><i class="dot"></i>集群未检测</span>
+  <span class="chip" id="c-svc"><i class="dot"></i>模型未启动</span>
+  <span class="chip" id="c-mode"><i class="dot"></i>告警 —</span>
+</header>
+
+<div class="shell">
+<aside>
+  <div class="grp">分析</div>
+  <button class="active" data-tab="monitor"><span class="ic">📹</span>摄像头监测</button>
+  <button data-tab="detect"><span class="ic">🎞</span>视频文件分析</button>
+  <div class="grp">配置</div>
+  <button data-tab="service"><span class="ic">⚡</span>推理服务</button>
+  <button data-tab="behaviors"><span class="ic">📋</span>行为定义</button>
+  <button data-tab="cluster"><span class="ic">🖥</span>集群状态</button>
+</aside>
+
+<main>
+<!-- 成本守卫横幅：孤儿作业 / 自动释放提示 -->
+<div id="cost-bar" style="display:none"></div>
+<!-- 摄像头监测 -->
+<section id="tab-monitor" class="active">
+  <div class="card">
+    <h3>摄像头监测 <span class="hint">持续分析画面中的人在做什么，由 AI 指出动作</span></h3>
+    <p class="lead">
+      接入<b>本机摄像头</b>（填 <code>0</code>）或 <b>RTSP 网络摄像头</b>
+      （填 <code>rtsp://用户名:密码@IP:554/路径</code>）。
+      启动后系统持续采集画面，每个窗口由模型说明<b>每个人在做什么</b>、动作有何变化。
+    </p>
+    <div class="row">
+      <input type="text" id="m-src" value="0" placeholder="0 或 rtsp://..."
+             style="flex:1;min-width:260px">
+      <button class="btn ghost" id="m-probe">探测源</button>
+      <button class="btn ghost" id="m-cams">找摄像头</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label class="f" style="width:108px">窗口步长（秒）
+        <input type="text" id="m-stride" value="2">
+      </label>
+      <!-- ★ 实时性主旋钮。滞后 ≈ 攒批窗口数 × 窗口步长，而成本 ≈ 每窗均摊
+           GPU 秒 —— 同一个旋钮决定两者，方向相反，所以让用户自己选，
+           而不是在配置里替他定死。 -->
+      <label class="f" style="width:120px"
+             title="一批攒够几个窗口才送去推理。攒得越少越实时（滞后≈这个数×窗口步长），攒得越多越省卡时。">
+        攒批窗口数
+        <input type="text" id="m-batch" value="2">
+      </label>
+      <button class="btn lg" id="m-start">▶ 开始监测</button>
+      <button class="btn ghost" id="m-stop" disabled>■ 停止</button>
+      <label class="chk" title="用本地假模型跑通链路，不需要 VPN、不花机时；结论会明确标注为演示数据">
+        <input type="checkbox" id="m-mock"> 演示模式（AI 结论是假的）
+      </label>
+      <select id="m-scene" title="演示模式下，让画面描述 / 动作 / 判定依据 / 告警互相自洽"
+              style="font-size:12.5px;padding:5px 8px">
+        <option value="littering">演示场景：乱扔垃圾</option>
+        <option value="smoking">演示场景：吸烟</option>
+        <option value="queue_jumping">演示场景：插队</option>
+        <option value="normal">演示场景：正常（不告警）</option>
+        <option value="">演示场景：不指定</option>
+      </select>
+      <span class="muted" id="m-probe-msg" style="font-size:12.5px"></span>
+    </div>
+    <!-- 「开始监测」为什么按不动 —— 必须写出来。
+         以前只把按钮置灰、什么都不说，用户对着一个点不动的按钮只能猜。 -->
+    <div class="note warn" id="m-why" style="margin-top:12px;display:none"></div>
+    <div class="note" style="margin-top:12px">
+      <b>没有摄像头也能试：</b>本机没摄像头、也没连 VPN 时，
+      先用 <code>python tools/mini_rtsp_h264.py --h264 runs/_ref.h264 --port 8554</code>
+      起一个自建 RTSP 源（走的是和真实摄像头完全一样的拉流代码），
+      源填 <code>rtsp://127.0.0.1:8554/live</code>，勾上「模拟验证」即可看到完整监测过程。
+    </div>
+    <div class="bar"><i id="m-bar"></i></div>
+    <div class="kv" id="m-msg">未开始</div>
+    <div class="note warn" id="m-warn" style="margin-top:10px;display:none"></div>
+    <div class="note warn" style="margin-top:14px">
+      <b>实时性由「攒批窗口数 × 窗口步长」决定，不是由推理速度决定。</b>
+      实测（2026-10-09）：每轮 16 秒里推理只占 7 秒，其余时间都在等画面把一批
+      窗口采齐 —— 所以 <b>滞后 ≈ 攒批窗口数 × 窗口步长</b>。<br>
+      默认「2 个 × 2 秒 ≈ 4 秒滞后」；而旧默认（8 个 × 2 秒 = 16 秒）正是
+      "人已经把动作做完了、结论才慢半拍出来"的原因。<br>
+      ⚠️ 把攒批调大可以省卡时，但**越攒越滞后**，且超过服务端批量上限
+      （默认 8）之后是纯亏。调小则更实时、每窗口更贵。<br>
+      ⚠️ 一个原理性下界：<b>一个窗口必须等它走完，才能知道那几秒里发生了什么</b>
+      —— 所以"实时"最多到 3 秒级，做不到 1 秒内出结论。
+    </div>
+  </div>
+
+  <div class="grid g-2-1">
+    <div>
+      <div class="card">
+        <h3>实时画面 <span class="hint" id="m-live-hint">未开始</span></h3>
+        <div class="livebox">
+          <img id="m-live" alt="实时画面">
+          <div class="ph" id="m-live-ph">
+            开始监测后，这里显示摄像头的实时画面（约 3 张/秒）。
+            下面那张才是<b>模型判断时看到的那一帧</b>。
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px;align-items:flex-start;gap:12px;flex-wrap:nowrap">
+          <div style="flex:0 0 190px">
+            <div class="muted" style="font-size:11.5px;margin-bottom:5px">
+              模型判定帧（每 2 秒一张）
+            </div>
+            <img id="m-evidence" class="evid" alt="模型判定帧">
+          </div>
+          <div style="flex:1;min-width:0">
+            <div class="muted" id="m-next" style="font-size:12.5px">
+              说明：<b>实时画面</b>是给人看的预览（流畅，可能比判定帧新几秒）；
+              <b>模型判定帧</b>是 AI 真正看到的画面，每 2 秒一张，最多滞后一个取样间隔。
+              两者分开显示，是为了让你能判断"AI 到底看的是什么"。
+            </div>
+            <div class="muted" id="m-pace" style="font-size:12px;margin-top:6px"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>AI 动作识别 <span class="hint">画面里每个人在做什么</span></h3>
+        <div class="feed" id="m-feed">
+          <span class="muted">开始监测后，这里会实时显示模型对每个人动作的描述。</span>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <h3>实时指标</h3>
+        <div class="metrics">
+          <div class="metric"><div class="k">已分析窗口</div><div class="v" id="mm-win">0</div></div>
+          <div class="metric"><div class="k">单窗口耗时</div><div class="v sm" id="mm-lat">—</div></div>
+          <div class="metric"><div class="k">输出量</div><div class="v sm" id="mm-tok">—</div></div>
+          <div class="metric"><div class="k">画面中人数</div><div class="v" id="mm-people">0</div></div>
+          <div class="metric"><div class="k">告警</div><div class="v" id="mm-alerts">0</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>告警</h3>
+        <div id="m-alerts"><span class="muted">暂无</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 视频文件 -->
+<section id="tab-detect">
+  <div class="card">
+    <h3>视频文件分析 <span class="hint">上传一段视频，逐窗口给出结论</span></h3>
+    <div class="drop" id="drop">
+      <div style="font-size:30px">📁</div>
+      <div style="margin-top:10px;font-size:14px">点击选择视频，或拖拽文件到这里</div>
+      <div class="muted" style="margin-top:6px;font-size:12.5px">
+        支持 mp4 / avi / mkv / mov · 手机拍 30 秒即可
+      </div>
+    </div>
+    <input type="file" id="file" accept="video/*" style="display:none">
+    <div class="row" style="margin-top:14px">
+      <button class="btn" id="btn-detect" disabled>开始分析</button>
+      <button class="btn ghost" id="btn-abort" disabled>中止</button>
+      <label class="chk" title="跑完一遍后从头再来，用于反复观察同一段画面；默认关闭（跑一遍就结束）">
+        <input type="checkbox" id="f-loop"> 循环播放
+      </label>
+      <label class="chk" title="用本地演示模型跑通链路，不需要 VPN、不花机时；结论会明确标注为演示数据">
+        <input type="checkbox" id="f-mock"> 演示模式（不需要集群）
+      </label>
+      <select id="f-scene" title="演示模式下，让画面描述 / 动作 / 判定依据 / 告警互相自洽"
+              style="font-size:12.5px;padding:5px 8px">
+        <option value="littering">演示场景：乱扔垃圾</option>
+        <option value="smoking">演示场景：吸烟</option>
+        <option value="queue_jumping">演示场景：插队</option>
+        <option value="normal">演示场景：正常（不告警）</option>
+        <option value="">演示场景：不指定</option>
+      </select>
+      <span class="muted" id="up-info" style="font-size:12.5px"></span>
+    </div>
+    <div class="note warn" id="f-mock-note" style="margin-top:12px;display:none">
+      ⚠️ <b>当前是演示模式</b>：识别结论由本地假模型按你选的场景产出，
+      <b>不是真实识别结果</b>，不要用它判断准确率。
+      它只证明「采集 → 切窗 → 判定 → 告警 → 页面」这条链路是通的。
+      要看真实效果，取消勾选后启动集群服务。
+    </div>
+    <div class="bar"><i id="job-bar"></i></div>
+    <div class="kv" id="job-msg">等待上传</div>
+    <div class="note" style="margin-top:12px">
+      <b>告警是逐窗口实时出的</b>：每分析完一个窗口就重算一次时序聚合，
+      命中就能立刻在下面看到，不用等整个视频跑完。
+      默认<b>跑完一遍就结束</b>；想反复看同一段画面请勾「循环播放」。
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>告警判定策略 <span class="hint">改完立即生效，无需重启模型服务</span></h3>
+    <div class="row">
+      <select id="agg-mode" style="min-width:300px">
+        <option value="ai">AI 判断 —— 模型自己决定该不该报警，并给出理由</option>
+        <option value="immediate">立即告警 —— 一判定命中就报，最快</option>
+        <option value="smoothed">时序平滑 —— 多窗口都命中才报，误报最少</option>
+      </select>
+      <label class="inline">去抖 <input type="text" id="agg-dedup" value="30"> 秒</label>
+      <label class="inline">置信度下限 <input type="text" id="agg-conf" value="0.45"></label>
+      <button class="btn" id="btn-agg">应用</button>
+    </div>
+    <div class="kv" id="agg-msg" style="margin-top:11px">—</div>
+    <div class="note" style="margin-top:13px">
+      <b>AI 判断</b>：模型额外输出 <code>alert</code>（要不要报警）与
+      <code>alert_reason</code>（理由），会区分「发生了」和「值得打扰人」。
+      模型未表态时回落到 <code>violation</code>，不会静默不报。<br>
+      <b>立即告警</b>：延迟最低，但单帧抖动会直接变误报。<br>
+      <b>时序平滑</b>：误报最少，但明显行为也要等第二个窗口。
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>告警 <span class="hint" id="alert-count"></span></h3>
+    <div id="alerts"><span class="muted">分析完成后显示</span></div>
+  </div>
+
+  <div class="card">
+    <h3>逐窗口详情 <span class="hint">模型看到的画面 + 它的原始描述</span></h3>
+    <div id="windows"><span class="muted">暂无数据</span></div>
+  </div>
+</section>
+
+<!-- 推理服务 -->
+<section id="tab-service">
+  <div class="card">
+    <h3>推理服务 <span class="hint">模型运行在同济 A800，经 SSH 隧道访问</span></h3>
+    <p class="lead">
+      启动后模型常驻显存，每个判断窗口只花推理时间本身，没有调度等待。
+      用完请点「停止并释放节点」，否则会一直占用显卡（约 4 元/卡时）。
+    </p>
+    <div class="row">
+      <select id="model-select" style="min-width:290px">
+        <option value="Qwen/Qwen3-VL-4B-Instruct">Qwen3-VL-4B-Instruct（推荐）</option>
+        <option value="Qwen/Qwen3-VL-2B-Instruct">Qwen3-VL-2B-Instruct（更快）</option>
+        <option value="google/gemma-4-E2B-it">gemma-4-E2B-it（对照）</option>
+      </select>
+      <button class="btn" id="btn-start">启动服务</button>
+      <button class="btn ghost" id="btn-stop">停止并释放节点</button>
+      <button class="btn ghost" id="btn-refresh">刷新</button>
+    </div>
+    <div class="bar"><i id="svc-bar"></i></div>
+    <div class="kv" id="svc-msg">未启动</div>
+  </div>
+  <div class="grid g2">
+    <div class="card"><h3>服务详情</h3><div class="kv" id="svc-detail">—</div></div>
+    <div class="card"><h3>日志</h3><pre id="log-box">—</pre></div>
+  </div>
+</section>
+
+<!-- 行为定义 -->
+<section id="tab-behaviors">
+  <div class="card">
+    <h3>不文明行为定义 <span class="hint">加新行为不用改代码</span></h3>
+    <p class="lead">
+      三条经验：① 只写「能看见什么」，不写「这合不合规矩」；
+      ② <b>反例比正例更重要</b>，它是压制误报的主力；
+      ③ 保存后自动热推给计算节点上的模型，无需重启作业。
+    </p>
+    <textarea id="yaml-box" spellcheck="false"
+      style="width:100%;min-height:340px;font:12px/1.6 Consolas,monospace;resize:vertical"></textarea>
+    <div class="row" style="margin-top:13px">
+      <button class="btn" id="btn-save">保存并热更新</button>
+      <button class="btn ghost" id="btn-yaml-reload">放弃修改</button>
+      <button class="btn ghost" id="btn-prompt">查看编译后的 Prompt</button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>编译后的完整 Prompt <span class="hint">模型实际收到的内容</span></h3>
+    <pre id="prompt-box">点上面的按钮生成</pre>
+  </div>
+</section>
+
+<!-- 集群 -->
+<section id="tab-cluster">
+  <div class="card">
+    <h3>连接与资源</h3>
+    <div class="row">
+      <button class="btn" id="btn-cluster-check">测试连通性</button>
+      <button class="btn ghost" id="btn-gpu">刷新 GPU 与队列</button>
+      <span class="muted" style="font-size:12.5px">需先连学校 VPN，否则完全不通</span>
+    </div>
+  </div>
+  <div class="grid g2">
+    <div class="card"><h3>A800 分区</h3><pre id="gpu-box">—</pre></div>
+    <div class="card"><h3>我的作业</h3><pre id="jobs-box">—</pre></div>
+  </div>
+  <div class="card"><h3>已下载的模型</h3><pre id="models-box">—</pre></div>
+</section>
+</main>
+</div>
+
+<div class="flashes" id="flashes"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let es = null, currentJob = null, uploadedJob = null;
+let monJob = null, monEs = null, monLiveTimer = null, monNextTimer = null;
+let strideTouched = false;   // 用户手改过步长后，就不再被服务端配置覆盖
+let batchTouched = false;    // 攒批窗口数同理
+
+function flash(msg, kind=''){
+  const d = document.createElement('div');
+  d.className = 'flash ' + kind; d.textContent = msg;
+  $('#flashes').appendChild(d);
+  setTimeout(()=>d.remove(), kind==='err'?9000:4200);
+}
+async function api(p, o){
+  const r = await fetch(p, o);
+  const t = await r.text();
+  let d; try{ d = JSON.parse(t); }catch(e){ d = {raw:t}; }
+  if(!r.ok) throw new Error(d.detail || d.error || ('HTTP ' + r.status));
+  return d;
+}
+document.querySelectorAll('aside button').forEach(b=>{
+  b.onclick = ()=>{
+    document.querySelectorAll('aside button').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('section').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    $('#tab-' + b.dataset.tab).classList.add('active');
+  };
+});
+
+/* 顶部状态 */
+function setChip(id, text, kind){
+  const el = $(id); el.className = 'chip' + (kind?' '+kind:'');
+  el.innerHTML = '<i class="dot"></i>' + text;
+}
+async function refresh(){
+  try{
+    const st = await api('/api/state');
+    const s = st.service;
+    const map = {idle:['模型未启动',''], ready:['模型就绪','ok'],
+      running:['隧道就绪','warn'], pending:['排队中','warn'],
+      submitting:['提交中','warn'], error:['启动失败','err'], stopped:['已停止','']};
+    const m = map[s.state] || [s.state,''];
+    setChip('#c-svc', m[0] + (s.node?' · '+s.node:''), m[1]);
+    const mode = (st.aggregate||{}).mode || '—';
+    setChip('#c-mode', '告警 ' + ({ai:'AI 判断', immediate:'立即告警',
+      smoothed:'时序平滑'}[mode]||mode), mode==='ai'?'ok':'');
+    $('#svc-msg').textContent = s.message || s.state;
+    const cost = st.cost || {};
+    $('#svc-detail').innerHTML = Object.entries({
+      '状态':s.state,'作业号':s.jobid||'—','计算节点':s.node||'—','模型':s.model,
+      '本机隧道':s.local_url||'—','隧道':s.tunnel_alive?'✅ 连通':'—',
+      '已运行':cost.uptime_text||'—',
+      // 把"正在烧钱"变成看得见的数字 —— 用户就是被这个坑过
+      '估算花费':(cost.est_cost?`≈ <b style="color:var(--warn)">${cost.est_cost} 元</b>`
+                 +`（${cost.price_per_hour} 元/卡时）`:'—')
+    }).map(([k,v])=>`${k}：<b>${v??'—'}</b>`).join('<br>');
+    $('#log-box').textContent = (st.log||[]).join('\n') || '—';
+    const busy = ['ready','running','pending','submitting'].includes(s.state);
+    $('#btn-start').disabled = busy; $('#btn-stop').disabled = !busy;
+    $('#svc-bar').style.width = s.state==='ready'?'100%':(busy?'55%':'0%');
+    if(!uploadedJob) $('#btn-detect').disabled = s.state!=='ready';
+    // ⚠️ 勾了「演示模式」就不需要集群 —— 这一条曾经写死成"服务没就绪就禁用"，
+    //    等于把"没 VPN 也能试"的唯一入口堵死了。
+    const canMonitor = (s.state === 'ready') || $('#m-mock').checked;
+    $('#m-start').disabled = !canMonitor;
+    // 按不动就说明为什么、并给一键去处（用户实测反馈："检测到摄像头后
+    // 开始监测按钮按不了" —— 当时按钮只是变灰，一个字都没解释）
+    const why = $('#m-why');
+    if (canMonitor) {
+      why.style.display = 'none';
+    } else {
+      why.style.display = 'block';
+      why.innerHTML = '<b>「开始监测」暂时不可用</b>：监测需要模型来判断画面，'
+        + '而现在两种情况都不满足 ——<br>'
+        + '① 集群推理服务未启动（当前状态 <b>' + (s.state || 'idle') + '</b>，'
+        + '约 4 元/卡时，用完记得停止）；'
+        + '或<br>② 勾选上方的 <b>「演示模式（AI 结论是假的）」</b>，'
+        + '用本地假模型把链路跑通（<b>不花钱、不需要 VPN</b>）。'
+        + '<div style="margin-top:9px">'
+        + '<button class="btn sm" id="m-goto-service">去启动推理服务</button> '
+        + '<button class="btn ghost sm" id="m-tick-mock">改用演示模式</button></div>';
+      $('#m-goto-service').onclick = ()=>{
+        document.querySelector('aside button[data-tab="service"]').click();
+        flash('在②页点「启动服务」，等 1-3 分钟就绪后再回来点开始监测');
+      };
+      $('#m-tick-mock').onclick = ()=>{
+        $('#m-mock').checked = true; refresh();
+        flash('已勾选演示模式，现在可以直接开始监测（结论是假的，仅验链路）');
+      };
+    }
+    // 首次加载时把服务端配置里的步长/攒批填进输入框
+    //（否则页面显示的和实际生效的对不上 —— 用户按页面上的数字理解实时性，会理解错）
+    if(!strideTouched && (st.live||{}).window_stride_sec)
+      $('#m-stride').value = st.live.window_stride_sec;
+    if(!batchTouched && (st.live||{}).continuous_batch_windows)
+      $('#m-batch').value = st.live.continuous_batch_windows;
+    $('#btn-detect').disabled = uploadedJob
+      ? (s.state!=='ready') && !$('#f-mock').checked : true;
+    $('#f-scene').style.display = $('#f-mock').checked ? '' : 'none';
+    $('#m-scene').style.display = $('#m-mock').checked ? '' : 'none';
+    $('#f-mock-note').style.display = $('#f-mock').checked ? 'block' : 'none';
+    renderCostBar(st);
+  }catch(e){}
+}
+
+/* 成本横幅：孤儿作业 / 自动释放。
+   为什么要放在最显眼的地方：这两种情况的共同点是
+   "页面看起来一切正常、集群上却在扣钱"，不提示就等于没做。 */
+function renderCostBar(st){
+  const bar = $('#cost-bar');
+  const parts = [];
+  const orph = st.orphans || [];
+  if(orph.length){
+    parts.push(`<b>⚠️ 集群上还有 ${orph.length} 个本项目作业在跑</b>
+      （${orph.map(j=>j.jobid+' '+j.name).join('、')}），
+      很可能正在计费，而你并没有在用它们。
+      <button class="btn sm" id="cost-sweep">立即停掉</button>`);
+  }
+  if(st.auto_released){
+    parts.push(`<b>🛑 ${st.auto_released}</b>
+      <button class="btn ghost sm" id="cost-ack">知道了</button>`);
+  }
+  if(!parts.length){ bar.style.display='none'; bar.innerHTML=''; return; }
+  bar.style.display='block';
+  bar.className = orph.length ? 'costbar danger' : 'costbar';
+  bar.innerHTML = parts.map(p=>`<div>${p}</div>`).join('');
+  $('#cost-sweep')?.addEventListener('click', async ()=>{
+    try{ flash((await api('/api/service/sweep',{method:'POST'})).message,'ok'); }
+    catch(e){ flash(e.message,'err'); }
+    refresh();
+  });
+  $('#cost-ack')?.addEventListener('click', ()=>{ bar.style.display='none'; });
+}
+
+/* 心跳：告诉后端"页面还开着、还看着、还在操作"。
+   后端的成本守卫靠它判断人走没走 —— 关掉浏览器、切到后台、
+   或者开着页面但十几分钟没碰，都会自动把 A800 退掉
+   （用户被一个没人管的孤儿作业坑了约 48 元）。 */
+let lastAct = Date.now();
+['mousemove','mousedown','keydown','click','scroll','touchstart','wheel']
+  .forEach(ev=>document.addEventListener(ev, ()=>{ lastAct = Date.now(); },
+    {passive:true, capture:true}));
+function heartbeat(){
+  try{
+    const idleSec = Math.round((Date.now() - lastAct) / 1000);
+    api('/api/heartbeat',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({visible: document.visibilityState==='visible',
+                           idle_sec: idleSec})}).catch(()=>{});
+  }catch(e){}
+}
+setInterval(heartbeat, 30000);
+document.addEventListener('visibilitychange', heartbeat);
+window.addEventListener('pagehide', ()=>{
+  try{ navigator.sendBeacon('/api/heartbeat',
+    new Blob([JSON.stringify({visible:false})],{type:'application/json'})); }catch(e){}
+});
+$('#m-mock').onchange = ()=>{ refresh(); };
+$('#f-mock').onchange = ()=>{ refresh(); };
+$('#m-stride').addEventListener('input', ()=>{ strideTouched = true; });
+$('#m-batch').addEventListener('input', ()=>{ batchTouched = true; });
+$('#btn-start').onclick = async ()=>{
+  $('#btn-start').disabled = true;
+  try{ const r = await api('/api/service/start',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({model:$('#model-select').value})}); flash(r.message,'ok'); }
+  catch(e){ flash(e.message,'err'); $('#btn-start').disabled=false; }
+  refresh();
+};
+$('#btn-stop').onclick = async ()=>{
+  try{ flash((await api('/api/service/stop',{method:'POST'})).message,'ok'); }
+  catch(e){ flash(e.message,'err'); } refresh();
+};
+$('#btn-refresh').onclick = ()=>{ refresh(); flash('已刷新'); };
+
+/* 摄像头监测 */
+$('#m-cams').onclick = async ()=>{
+  $('#m-probe-msg').textContent = '探测中（会短暂占用摄像头）…';
+  try{
+    const r = await api('/api/live/cameras');
+    if(r.cameras.length){
+      $('#m-probe-msg').innerHTML = '找到：' + r.cameras.map(c=>
+        `<b>#${c.index}</b> ${c.width}×${c.height}`
+        + (c.backend?` <span class="muted">(${c.backend})</span>`:'')).join('　')
+        + '　<span class="muted">→ 填进上面的输入框再点「开始监测」</span>';
+    }else{
+      // ⚠️ 后端会把"是否受限令牌"一起返回：受限时"一个都没有"的最可能
+      //    原因就是权限，而不是硬件 —— 不能含糊过去（实测被误导过）
+      const tips = String(r.hint||'未找到可用摄像头')
+        .split('；').map(t=>`<li>${t}</li>`).join('');
+      $('#m-probe-msg').innerHTML =
+        `<span style="color:var(--warn)">未找到可用摄像头`
+        + (r.restricted? '（<b>本服务进程权限受限</b>）':'') + '</span>'
+        + `<ul style="margin:7px 0 0 16px;padding:0;font-size:12.5px">${tips}</ul>`
+        + (r.tried? `<div class="muted" style="font-size:11.5px;margin-top:5px">`
+            + `已尝试：${r.tried.join('、')}</div>`:'');
+    }
+  }catch(e){ $('#m-probe-msg').textContent = '❌ ' + e.message; }
+};
+$('#m-probe').onclick = async ()=>{
+  const src = $('#m-src').value.trim();
+  $('#m-probe-msg').textContent = '探测中…（RTSP 可能要十几秒，会依次试 TCP 与 UDP）';
+  try{
+    const r = await api('/api/live/probe',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({source:src})});
+    if(r.ok){
+      $('#m-probe-msg').innerHTML = `✅ ${r.label}　${r.width}×${r.height}　`
+        + `${r.measured_fps} fps`
+        + (r.transport? `　传输 ${r.transport.toUpperCase()}` : '')
+        + (r.note? `<br><span style="color:var(--warn)">⚠️ ${r.note}</span>` : '');
+    }else{
+      let h = `❌ ${r.error||'不可用'}`;
+      if(r.hints && r.hints.length){
+        h += '<br><br><b>常见网络摄像头地址格式</b>（照着改成你设备的 IP / 账号密码）：<br>'
+          + r.hints.map(x=>`· <b>${x[0]}</b>：<code>${x[1]}</code>`).join('<br>');
+      }
+      $('#m-probe-msg').innerHTML = h;
+    }
+  }catch(e){ $('#m-probe-msg').textContent = '❌ ' + e.message; }
+};
+$('#m-start').onclick = async ()=>{
+  const src = $('#m-src').value.trim();
+  if(!src) return flash('请填写视频源','err');
+  const useMock = $('#m-mock').checked;
+  $('#m-start').disabled = true; $('#m-stop').disabled = false;
+  $('#m-feed').innerHTML = '';
+  $('#m-alerts').innerHTML = '<span class="muted">监测中…</span>';
+  $('#m-warn').style.display = 'none';
+  try{
+    await api('/api/live/config',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        window_stride_sec: parseFloat($('#m-stride').value)||2,
+        // 攒批窗口数：实时性的主旋钮，见页面上的说明
+        continuous_batch_windows: parseInt($('#m-batch').value,10)||2})});
+    const r = await api('/api/live/start',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({source:src, continuous:true, with_actions:true,
+                           use_mock:useMock,
+                           mock_scene: $('#m-scene').value})});
+    flash((useMock? '【演示模式·结论是假的】' : '') + '已开始持续监测：' + r.label,
+          useMock? 'warn':'ok');
+    if(useMock){
+      const w = $('#m-warn');
+      w.style.display='block';
+      const sc = $('#m-scene').selectedOptions[0].textContent;
+      w.innerHTML = '⚠️ <b>当前是演示模式，识别结论由本地假模型产出，不是真实识别结果</b>'
+        + `（${sc}）。画面与推理链路是真的（真在拉流、真在切窗、真在推送），`
+        + '所以能验证链路与页面，但<b>不能用来判断准确率</b>。'
+        + '想看真实效果：取消勾选「演示模式」，到「服务」页启动集群服务。';
+    } else {
+      $('#m-warn').style.display='none';
+    }
+    monJob = r.job_id; streamMonitor(r.job_id); startLiveView(r.job_id);
+  }catch(e){
+    flash(e.message,'err'); $('#m-start').disabled=false; $('#m-stop').disabled=true;
+  }
+};
+$('#m-stop').onclick = async ()=>{
+  if(!monJob) return;
+  try{ await api('/api/stop/' + monJob,{method:'POST'}); flash('已请求停止'); }
+  catch(e){ flash(e.message,'err'); }
+  stopLiveView();
+};
+
+function stopLiveView(){
+  if(monLiveTimer){ clearInterval(monLiveTimer); monLiveTimer=null; }
+  if(monNextTimer){ clearInterval(monNextTimer); monNextTimer=null; }
+  $('#m-live-hint').textContent = '已停止';
+}
+/* 实时画面：优先用 MJPEG 真流（浏览器原生渲染，约 10 张/秒、连续不断）。
+   ⚠️ 原先是"每 350ms 轮询一张 JPEG"，最多 3 张/秒且断续 —— 用户反馈
+      "实时画面很卡"有一部分就来自这里。更关键的是：轮询只能拿到磁盘上
+      已有的预览帧，而采集线程在推理时根本不写帧，于是整段冻住。
+      改流之后，帧由**读帧线程**持续产出（推理期间照走），所以不再冻。
+   万一服务端不支持/断流，退回轮询模式，保证画面不会永久空白。 */
+function startLiveView(jid){
+  stopLiveView();
+  $('#m-live-hint').textContent = '实时流';
+  const img = $('#m-live');
+  let fellBack = false;
+  img.onerror = ()=>{
+    if(fellBack) return;
+    fellBack = true;
+    $('#m-live-hint').textContent = '预览（轮询回退）';
+    const tick = ()=>{
+      const probe = new Image();
+      probe.onload = ()=>{ img.src = probe.src; img.style.display='block';
+                           $('#m-live-ph').style.display='none'; };
+      probe.src = `/api/job/${jid}/preview?t=${Date.now()}`;
+    };
+    tick();
+    monLiveTimer = setInterval(tick, 350);
+  };
+  img.onload = ()=>{ img.style.display='block'; $('#m-live-ph').style.display='none'; };
+  // 加时间戳避免浏览器复用旧连接
+  img.src = `/api/job/${jid}/stream.mjpg?t=${Date.now()}`;
+}
+/* 节奏显示：必须说真话（踩过一次）。
+   旧版把"步长 + 单窗延迟"当倒计时显示，在"一个窗口一次往返"的老架构下是对的；
+   批量化之后结论是**成批到达**的 —— 8 条一起出现、然后等一批的时间。
+   这时再显示"12 秒后产出一个窗口"就完全错了：用户会以为系统还那么慢，
+   而实际均摊只有 1.4 秒/条。所以改成按**批**统计到达节奏。
+   只有服务端确实没做批量（batch<=1）时才退回倒计时。 */
+let monLastEvT = 0, monCurBatch = 0, monBatchStart = 0;
+let monPrevN = 0, monPrevSpan = 0;
+function noteWindowArrival(d){
+  const now = Date.now() / 1000;
+  // 相邻两次事件超过 1.5 秒就算新的一批（同一批的事件几乎同时到达）
+  if(monLastEvT && now - monLastEvT > 1.5){
+    if(monCurBatch > 0 && monBatchStart){
+      monPrevN = monCurBatch;
+      monPrevSpan = now - monBatchStart;
+    }
+    monBatchStart = now; monCurBatch = 0;
+  } else if(!monBatchStart){
+    monBatchStart = now;
+  }
+  monLastEvT = now;
+  monCurBatch += 1;
+}
+function renderWindowPace(d, stride){
+  const el = $('#m-next');
+  if(!el) return;
+  if(monPrevN > 1 && monPrevSpan > 0){
+    const per = monPrevSpan / monPrevN;
+    el.innerHTML = `<b>本批 ${monCurBatch} 条结论已出</b>　`
+      + `上一批 ${monPrevN} 条用时 <b>${monPrevSpan.toFixed(1)}s</b>，`
+      + `均摊 <b${per <= 3 ? ' style="color:var(--ok)"' : ''}>`
+      + `${per.toFixed(1)} 秒/条</b>`
+      + `<br><span class="muted">批量化后结论成批到达（一批一起出、然后等下一批）：`
+      + `变快的是<b>节奏</b>，不是单条延迟。</span>`;
+    return;
+  }
+  const lat = d.latency || 0;
+  el.innerHTML = `本窗耗时 <b>${lat.toFixed(1)}s</b>，下一个窗口约 `
+    + `<b>${Math.round(stride + lat)}</b> 秒后产出`
+    + `<br><span class="muted">当前服务端 batch=1（未启用批量）：`
+    + `每个窗口一次往返，节奏 ≈ 步长 + 推理耗时。</span>`;
+}
+function startNextCountdown(stride){
+  if(monNextTimer){ clearInterval(monNextTimer); monNextTimer=null; }
+  let left = stride;
+  const render = ()=>{
+    $('#m-next').innerHTML = left > 0
+      ? `<b>AI 正在分析…</b>　下一个窗口约 <b>${left}</b> 秒后产出`
+        + `（窗口步长 ${stride} 秒；等待期间画面仍在实时刷新）`
+      : '<b>正在出结果…</b>';
+  };
+  render();
+  monNextTimer = setInterval(()=>{ left -= 1; render(); }, 1000);
+}
+$('#m-live').onclick = ()=> $('#m-live').classList.toggle('big');
+$('#m-evidence').onclick = ()=> $('#m-evidence').classList.toggle('big');
+
+/* ── 逐条显示（用户要求"一条一条出，不要一批一起蹦"）──
+   为什么要做：批量推理是"一次前向算完 N 个窗口"，所以这 N 个结果必然
+   在**同一瞬间**算完 —— 页面直接推就是"一批一起蹦出来"。
+   但一批 8 条要花约 11.5 秒算完，这恰好等于 1.44 秒/条：
+   把显示按这个节奏铺开，用户看到的是一条一条稳定出现，
+   而且**永远不落后**（显示速度恰好等于产出速度，不会越积越多）。
+   ⚠️ 页面必须如实说明"后台是批量算的、这里是按节奏显示"，
+      否则就是在假装单条延迟变快了。 */
+let monQueue = [];
+let monPaceMs = 1400;        // 当前逐条间隔（自适应，见 updatePace）
+let monPaceTimer = null;
+let monShownN = 0;
+let monBatchSize = 8;        // 上一批的条数（用于判断"是否真的落后"）
+
+/* 显示间隔：**匀速**是这里的核心目标，别为了清空积压就加速。
+   ⚠️ 第一版按积压量激进提速（>6 条就 3 倍速），结果是"2 秒内蹦完 8 条、
+   然后空等 9 秒"—— 用户看到的仍然是"一阵一阵的"，不是一条一条。
+   正确做法：按**产出速率**匀速显示（一批 8 条 / 11.5 秒 → 1.44 秒一条），
+   稳态下显示速度恰好等于产出速度，积压不会增长，节奏就是稳的。
+   只有真的落后（积压超过两批）才加速追。 */
+function paceDelayFor(backlog, baseMs, batchSize){
+  const bs = batchSize || 1;
+  if(backlog > bs * 2) return Math.max(200, baseMs / 3);
+  if(backlog > bs) return Math.max(300, baseMs / 2);
+  return baseMs;
+}
+function updatePace(){
+  // 用"上一批 N 条用了 X 秒"推出每条应占的时间；限幅避免极端值
+  if(monPrevN > 1 && monPrevSpan > 0){
+    monPaceMs = Math.min(5000, Math.max(250, (monPrevSpan / monPrevN) * 1000));
+    monBatchSize = monPrevN;
+  }
+}
+function enqueueWindow(d, jid){
+  monQueue.push({d, jid});
+  renderPaceHint();
+  if(monPaceTimer) return;
+  const step = ()=>{
+    monPaceTimer = null;
+    if(!monQueue.length) return;
+    const it = monQueue.shift();
+    renderWindowCard(it.d, it.jid);
+    monPaceTimer = setTimeout(step,
+      paceDelayFor(monQueue.length, monPaceMs, monBatchSize));
+    renderPaceHint();
+  };
+  monPaceTimer = setTimeout(step, 0);
+}
+function renderPaceHint(){
+  const el = $('#m-pace');
+  if(!el) return;
+  const backlog = monQueue.length;
+  if(!monPrevN || monPrevN <= 1){
+    el.textContent = '当前服务端 batch=1：结论本来就是一条一条来的';
+    return;
+  }
+  el.innerHTML = `后台：<b>${monPrevN} 条/批</b>（一批约 ${monPrevSpan.toFixed(1)}s）`
+    + `　·　页面：<b>逐条显示，约 ${(monPaceMs/1000).toFixed(1)}s 一条</b>`
+    + (backlog ? `　·　待显示 <b>${backlog}</b> 条` : '')
+    + `<br><span class="muted">批量算得快、但一批是同时算完的；
+       这里按"一批耗时 ÷ 条数"匀速铺开显示，所以你看到的是一条一条，
+       且显示速度与产出速度一致、不会越积越多。</span>`;
+}
+function renderWindowCard(d, jid){
+  $('#m-bar').style.width = Math.min(100, Math.round((d.progress||0)*100)) + '%';
+  const n = d.cumulative || d.index;
+  $('#m-msg').textContent = `监测中 · 第 ${n} 个窗口 · ${d.t_start}s–${d.t_end}s`
+    + (d.latency ? ` · 本批 ${d.batch||1} 条` : '');
+  $('#mm-win').textContent = n;
+  if(d.latency) $('#mm-lat').textContent = d.latency.toFixed(1)+'s';
+  // 延迟分解：输出 token 数就是"慢"的根源（每 token 约 28ms），
+  // 跳过模型调用的窗口也在这里标出来
+  if(d.skipped){
+    $('#mm-tok').textContent = '跳过';
+    $('#mm-tok').title = `画面无明显变化（动作量 ${d.motion ?? '?'}），未调用模型`;
+  } else if(d.tokens_out){
+    $('#mm-tok').textContent = d.tokens_out + ' tok';
+    $('#mm-tok').title = `输入 ${d.tokens_prompt||'?'} tok，输出 ${d.tokens_out} tok`
+      + `（约 ${(d.tokens_out*0.028).toFixed(1)}s 花在解码）`;
+  }
+  // 模型判定帧：这就是 AI 实际看到的那张图
+  const ev = $('#m-evidence');
+  ev.src = `/api/job/${jid}/frames/${d.window_id}/0?t=${Date.now()}`;
+  addAction(d, jid);
+  monShownN += 1;
+}
+
+function streamMonitor(jid){
+  if(monEs) monEs.close();
+  monQueue = []; monShownN = 0;
+  monPrevN = 0; monPrevSpan = 0;
+  monEs = new EventSource(`/api/job/${jid}/stream`);
+  monEs.onmessage = ev=>{
+    const d = JSON.parse(ev.data);
+    if(d.type==='window'){
+      // 先记账（用于算批间隔），再入队逐条显示
+      noteWindowArrival(d);
+      updatePace();
+      enqueueWindow(d, jid);
+      if(monNextTimer){ clearInterval(monNextTimer); monNextTimer = null; }
+    }
+    // ★ 逐窗口的告警事件：告警现在会在第一个命中窗口之后立刻出现，
+    //   不再等到整个视频跑完（实测反馈的"告警要等中止才出"）
+    if(d.type==='alerts'){
+      $('#mm-alerts').textContent = (d.alerts||[]).length;
+      renderAlerts(d.alerts||[], true);
+      const w = $('#m-warn');
+      if(d.behind){
+        w.style.display = 'block';
+        w.innerHTML = '⚠️ <b>处理速度跟不上画面</b>：单窗口耗时已接近或超过窗口步长，'
+          + '系统会逐渐滞后（看到的是几秒前的画面）。请把「窗口步长」调大，'
+          + '或减少启用的行为数量。';
+      } else {
+        w.style.display = 'none';
+      }
+    }
+    if(d.type==='done'){
+      $('#m-msg').textContent = d.summary.message;
+      $('#m-bar').style.width='100%';
+      monEs.close(); monEs=null;
+      stopLiveView();
+      $('#m-start').disabled=false; $('#m-stop').disabled=true;
+      flash('监测已停止','ok');
+    }
+    if(d.type==='error'){
+      $('#m-msg').textContent = '❌ ' + d.error;
+      // 持续监测里流断了会自动重连，这时**不能**停掉实时画面轮询，
+      // 否则用户看到画面冻住，其实后台已经在重连了。
+      if(!d.recovering){
+        flash('监测失败：'+d.error,'err');
+        stopLiveView();
+      } else {
+        flash(d.error,'warn');
+      }
+      monEs.close(); monEs=null;
+      $('#m-start').disabled=false; $('#m-stop').disabled=true;
+    }
+  };
+  monEs.onerror = ()=>{ if(monEs){ monEs.close(); monEs=null;
+    flash('实时连接中断，可刷新页面','err'); } };
+}
+
+/* 缩略图：取**窗口中间那一帧**，而不是第 0 帧。
+   为什么（用户实测反馈"图片始终是同一张，并不是人做对应动作的那一帧"）：
+     ① 每个窗口 4 帧，第 0 帧是窗口**开头**那一帧 —— 动作往往在后面几帧里，
+        所以一直显示"人还没开始做动作"的画面。
+     ② URL 里过去没有缓存破坏参数，而 /frames 接口也不返回缓存头，
+        浏览器就按启发式规则复用第一张图 —— 于是所有卡片的图**完全一样**。
+        现在把帧号写进查询串：同一帧仍能走缓存，不同帧是不同 URL。
+   idx 由 frame0 算：取中间那帧（4 帧 → 第 2 帧），离"动作"最近。 */
+function frameThumbUrl(jid, d){
+  const n = Math.max(1, d.frames || 4);
+  const mid = Math.floor((n - 1) / 2);
+  const f0 = (d.frame0 === undefined || d.frame0 === null) ? -1 : d.frame0;
+  // frame0 < 0 表示后端没给真实帧号（旧记录）→ 回退旧的"按时间戳推算"路径
+  const bust = f0 >= 0 ? f0 + mid : Math.round((d.t_start||0) * 100);
+  return `/api/job/${jid}/frames/${d.window_id}/${mid}?f=${bust}`;
+}
+
+function addAction(d, jid){
+  const people = d.people || [];
+  $('#mm-people').textContent = people.length;
+  const hits = d.hits || [];
+  const div = document.createElement('div');
+  div.className = 'act' + (hits.length?' hit':'');
+  const thumb = frameThumbUrl(jid, d);
+  let h = `<div class="top">
+      <span class="t">#${d.cumulative||d.index}</span>
+      <span>${d.t_start}s – ${d.t_end}s</span>
+      ${d.skipped
+        ? `<span class="tag" title="画面无明显变化（动作量 ${d.motion ?? '?'}），未调用模型">
+             跳过 · 画面无变化</span>`
+        : (d.latency?`<span>${d.latency.toFixed(1)}s</span>`:'')}
+      ${d.tokens_out?`<span class="muted" title="输出 token 数决定延迟（约 28ms/token）">${d.tokens_out} tok</span>`:''}
+      ${hits.map(x=>`<span class="tag">${x.name} ${(x.confidence*100).toFixed(0)}%</span>`).join('')}
+      ${d.error?`<span style="color:var(--err)">${d.error}</span>`:''}
+    </div>
+    <div class="row" style="align-items:flex-start;gap:14px;flex-wrap:nowrap">
+      <img class="thumb" src="${thumb}" loading="lazy"
+           onclick="this.classList.toggle('big')"
+           title="本窗口的中间一帧（共 ${d.frames||4} 帧）；点击放大">
+      <div style="flex:1;min-width:0">`;
+  if(d.scene) h += `<div style="font-size:13px;margin-bottom:6px">${d.scene}</div>`;
+  if(people.length){
+    people.forEach((p,i)=>{
+      h += `<div class="person"><span class="pin">${i+1}</span>
+        <div class="body">
+          <div class="where">${p.where||''}${p.appearance?' · '+p.appearance:''}</div>
+          <div class="doing">${p.action||''}</div>
+          ${p.changed && p.changed!=='无' ? `<div class="chg">↻ ${p.changed}</div>` : ''}
+        </div></div>`;
+    });
+  } else {
+    h += `<div class="muted" style="font-size:12.5px">画面中未识别到人</div>`;
+  }
+  h += `</div></div>`;
+  div.innerHTML = h;
+  const feed = $('#m-feed');
+  feed.prepend(div);
+  while(feed.children.length > 60) feed.lastChild.remove();
+}
+
+/* 视频文件 */
+const drop = $('#drop'), fileInput = $('#file');
+drop.onclick = ()=> fileInput.click();
+drop.ondragover = e=>{ e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = ()=> drop.classList.remove('over');
+drop.ondrop = e=>{ e.preventDefault(); drop.classList.remove('over');
+  if(e.dataTransfer.files[0]) doUpload(e.dataTransfer.files[0]); };
+fileInput.onchange = ()=>{ if(fileInput.files[0]) doUpload(fileInput.files[0]); };
+
+async function doUpload(f){
+  const fd = new FormData(); fd.append('file', f);
+  $('#up-info').textContent = '上传中…';
+  try{
+    const r = await api('/api/upload',{method:'POST', body:fd});
+    uploadedJob = r.job_id;
+    $('#up-info').textContent = `${f.name} · ${r.size_mb} MB`;
+    $('#btn-detect').disabled = false;
+    flash('上传完成','ok');
+  }catch(e){ flash('上传失败：'+e.message,'err'); $('#up-info').textContent=''; }
+}
+$('#btn-detect').onclick = async ()=>{
+  if(!uploadedJob) return flash('请先上传视频','err');
+  $('#btn-detect').disabled=true; $('#btn-abort').disabled=false;
+  $('#alerts').innerHTML='<span class="muted">分析中…</span>';
+  $('#windows').innerHTML='';
+  const useMock = $('#f-mock').checked;
+  $('#f-mock-note').style.display = useMock ? 'block' : 'none';
+  try{
+    await api('/api/detect/'+uploadedJob,{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({use_mock: useMock,
+                           mock_scene: $('#f-scene').value,
+                           loop: $('#f-loop').checked})});
+    streamJob(uploadedJob);
+  }catch(e){ flash(e.message,'err'); $('#btn-detect').disabled=false;
+    $('#btn-abort').disabled=true; }
+};
+$('#btn-abort').onclick = async ()=>{
+  if(!uploadedJob) return;
+  try{ await api('/api/stop/'+uploadedJob,{method:'POST'}); flash('已请求中止'); }
+  catch(e){ flash(e.message,'err'); }
+};
+function streamJob(jid){
+  currentJob = jid;
+  if(es) es.close();
+  es = new EventSource(`/api/job/${jid}/stream`);
+  es.onmessage = ev=>{
+    const d = JSON.parse(ev.data);
+    if(d.type==='window') addWindow(d, jid);
+    if(d.type==='hello'||d.type==='final')
+      $('#job-bar').style.width = Math.round((d.summary.progress||0)*100)+'%';
+    // ★ 告警逐窗口实时刷新（以前后端只在整遍跑完后推一次、而且前端还不处理，
+    //   于是"告警要等中止才出现" —— 这是实测反馈里的第二个问题）
+    if(d.type==='alerts'){
+      const list = d.alerts||[];
+      renderAlerts(list, false);
+      $('#alert-count').textContent = list.length
+        ? `已 ${list.length} 条 · 分析到第 ${d.index||'?'}/${d.total||'?'} 个窗口`
+        : `暂无告警 · 已分析 ${d.index||0}/${d.total||'?'} 个窗口`;
+    }
+    if(d.type==='done'){
+      $('#job-bar').style.width='100%';
+      $('#job-msg').textContent = d.summary.message;
+      renderAlerts(d.summary.alerts||[], false);
+      flash('分析完成：' + (d.summary.alerts||[]).length + ' 条告警','ok');
+      es.close(); es=null;
+      $('#btn-detect').disabled=false; $('#btn-abort').disabled=true;
+    }
+    if(d.type==='error'){
+      $('#job-msg').textContent = '❌ ' + d.error;
+      flash('分析失败：'+d.error,'err');
+      es.close(); es=null;
+      $('#btn-detect').disabled=false; $('#btn-abort').disabled=true;
+    }
+  };
+  es.onerror = ()=>{ if(es){ es.close(); es=null; flash('实时连接中断','err'); } };
+}
+function addWindow(d, jid){
+  $('#job-bar').style.width = Math.round(d.progress*100)+'%';
+  $('#job-msg').textContent = `推理中 ${d.index}/${d.total}　${d.t_start}s–${d.t_end}s`
+    + (d.latency?`　${d.latency.toFixed(1)}s`:'');
+  const hits = d.hits||[];
+  const div = document.createElement('div');
+  div.className = 'act' + (hits.length?' hit':'');
+  div.innerHTML = `<div class="top">
+      <span class="t">${d.t_start}s – ${d.t_end}s</span>
+      ${d.latency?`<span>${d.latency.toFixed(1)}s</span>`:''}
+      ${hits.map(x=>`<span class="tag">${x.name} ${(x.confidence*100).toFixed(0)}%</span>`).join('')}
+      ${d.error?`<span style="color:var(--err)">${d.error}</span>`:''}
+    </div>
+    <div class="row" style="align-items:flex-start;gap:14px;flex-wrap:nowrap">
+      <img class="thumb" src="${frameThumbUrl(jid, d)}"
+           loading="lazy" onclick="this.classList.toggle('big')"
+           title="本窗口的中间一帧；点击放大">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px">${d.scene||'<span class="muted">（无场景描述）</span>'}</div>
+        ${(d.people||[]).map(p=>`<div class="person"><span class="pin">·</span>
+           <div class="body"><div class="doing">${p.action||''}</div>
+           <div class="where">${p.where||''}</div></div></div>`).join('')}
+        ${hits.map(x=>x.observable?
+          `<div class="muted" style="margin-top:5px;font-size:12px">证据：${x.observable}</div>`:'').join('')}
+      </div></div>`;
+  $('#windows').prepend(div);
+}
+function renderAlerts(alerts, mon){
+  const box = mon ? '#m-alerts' : '#alerts';
+  if(!mon) $('#alert-count').textContent = alerts.length ? `（${alerts.length} 条）` : '';
+  if(!alerts.length){
+    $(box).innerHTML = '<span class="muted">未发现确认的不文明行为。'
+      + (mon?'':'时序平滑要求同一行为在多个窗口重复出现才升级为告警。')+'</span>';
+    return;
+  }
+  $(box).innerHTML = alerts.map(a=>`
+    <div class="alert">
+      <div class="t">${a.behavior_name}
+        <span class="tag sev-${a.severity}">${a.severity}</span></div>
+      <div class="meta">${a.t_start}s – ${a.t_end}s ·
+        命中 ${a.hits}/${a.span} · 置信度 ${(a.max_confidence*100).toFixed(0)}%
+        ${a.person_desc?' · '+a.person_desc:''}</div>
+      ${a.reason?`<div class="reason">🤖 ${a.reason}</div>`:''}
+      ${(a.evidences||[]).map(e=>`<div class="ev">· ${e}</div>`).join('')}
+    </div>`).join('');
+}
+
+/* 告警策略 */
+async function loadAgg(){
+  try{
+    const a = (await api('/api/state')).aggregate || {};
+    if(a.mode) $('#agg-mode').value = a.mode;
+    if(a.dedup_sec!=null) $('#agg-dedup').value = a.dedup_sec;
+    if(a.min_confidence!=null) $('#agg-conf').value = a.min_confidence;
+    $('#agg-msg').textContent =
+      `当前：${a.mode} · 去抖 ${a.dedup_sec}s · 置信度下限 ${a.min_confidence}`;
+  }catch(e){}
+}
+$('#btn-agg').onclick = async ()=>{
+  try{
+    const r = await api('/api/aggregate/config',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({mode:$('#agg-mode').value,
+        dedup_sec:parseFloat($('#agg-dedup').value),
+        min_confidence:parseFloat($('#agg-conf').value)})});
+    flash('已切换到「'+r.aggregate.mode+'」，重跑检测生效','ok'); loadAgg(); refresh();
+  }catch(e){ flash('设置失败：'+e.message,'err'); }
+};
+
+/* 行为定义 */
+async function loadYaml(){
+  try{ $('#yaml-box').value = (await api('/api/behaviors/raw')).text; }
+  catch(e){ flash('读取失败：'+e.message,'err'); }
+}
+$('#btn-yaml-reload').onclick = ()=>{ loadYaml(); flash('已重新载入'); };
+$('#btn-save').onclick = async ()=>{
+  try{
+    const r = await api('/api/behaviors/raw',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text:$('#yaml-box').value})});
+    flash(`已保存，启用 ${r.enabled} 项` + (r.pushed?'，已热推给模型':''),'ok'); refresh();
+  }catch(e){ flash('保存失败：'+e.message,'err'); }
+};
+$('#btn-prompt').onclick = async ()=>{
+  try{ const r = await api('/api/behaviors/prompt');
+    $('#prompt-box').textContent = r.prompt; flash('已生成（模式 '+r.mode+'）'); }
+  catch(e){ flash(e.message,'err'); }
+};
+
+/* 集群 */
+$('#btn-cluster-check').onclick = async ()=>{
+  setChip('#c-vpn','检测中…','warn');
+  try{
+    const r = await api('/api/cluster/check');
+    if(r.ok){ setChip('#c-vpn','已连 '+r.host,'ok'); flash('集群连通：'+r.host,'ok'); }
+    else{ setChip('#c-vpn','连接失败','err'); flash('连不上：'+r.error+'　检查 VPN','err'); }
+  }catch(e){ setChip('#c-vpn','连接失败','err'); flash(e.message,'err'); }
+};
+$('#btn-gpu').onclick = async ()=>{
+  $('#gpu-box').textContent='读取中…';
+  try{
+    const r = await api('/api/cluster/resources');
+    if(!r.ok){ $('#gpu-box').textContent='❌ '+r.error; return; }
+    $('#gpu-box').textContent = r.gpu||'（无输出）';
+    $('#jobs-box').textContent = r.jobs.length
+      ? r.jobs.map(j=>`${j.jobid}  ${j.name}  ${j.state}  ${j.elapsed}  ${j.node||j.reason}`).join('\n')
+      : '（队列为空）';
+    $('#models-box').textContent = (r.models||[]).join('\n')||'（未找到权重）';
+  }catch(e){ $('#gpu-box').textContent='❌ '+e.message; }
+};
+
+/* 标签页不可见时自动暂停监测 —— 这是真实存在的时间与机费浪费：
+   用户切走去做别的事，后台仍在持续调模型（A800 约 4 元/卡时）。
+   切回来时给出提示，由用户决定是否继续，而不是悄悄继续烧钱。 */
+let hiddenPaused = false;
+document.addEventListener('visibilitychange', async ()=>{
+  if(!monJob) return;
+  const s = await api('/api/job/' + monJob).catch(()=>null);
+  if(!s || !['capturing','running','queued'].includes(s.state)) return;
+  if(document.hidden){
+    hiddenPaused = true;
+    try{
+      await api('/api/stop/' + monJob, {method:'POST'});
+      flash('检测到页面已切到后台，已暂停监测以节省机时', 'warn');
+    }catch(e){}
+  } else if(hiddenPaused){
+    hiddenPaused = false;
+    flash('你回来了 —— 监测已暂停，点「开始监测」可继续', 'warn');
+  }
+});
+
+/* 启动 */
+loadYaml(); refresh(); loadAgg();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
