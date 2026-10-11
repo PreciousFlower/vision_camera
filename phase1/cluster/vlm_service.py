@@ -18,7 +18,7 @@
 
 核心设计：
     · 模型只在启动时加载一次，之后常驻显存 —— 这正是"实时"的来源
-    · 单请求单窗口（4 帧）推理，用线程锁串行化，避免并发把显存打满
+    · 单请求单窗口推理，检测优先的有界队列凑批，避免无界积压与显存争抢
     · 复用 civility/prompts.py 生成 Prompt，与云端/批处理三条路径完全一致
 """
 from __future__ import annotations
@@ -195,7 +195,7 @@ def infer_one(frames: list, labels: list[str], max_new_tokens: int, few_shot: bo
     options = {"behaviors": behaviors} if behaviors is not None else {}
     fut = BATCHER.submit(frames, labels, max_new_tokens, few_shot,
                          with_alert, with_actions, with_risks, **options)
-    return fut.result(timeout=BATCH_TIMEOUT_SEC)
+    return wait_for_result(fut)
 
 
 # ───────────────────── 动态批量推理（吞吐的关键）─────────────────────
@@ -219,11 +219,32 @@ def infer_one(frames: list, labels: list[str], max_new_tokens: int, few_shot: bo
 BATCH_MAX = int(os.environ.get("VLM_BATCH_MAX", "8") or 8)
 BATCH_WAIT_MS = int(os.environ.get("VLM_BATCH_WAIT_MS", "25") or 0)
 BATCH_TIMEOUT_SEC = float(os.environ.get("VLM_BATCH_TIMEOUT", "600") or 600)
+# Bound the retained image payloads; reject overload instead of extending lag.
+BATCH_QUEUE_MAX = max(1, int(os.environ.get("VLM_QUEUE_MAX", "64") or 64))
+BATCH_QA_QUEUE_MAX = max(1, int(os.environ.get("VLM_QA_QUEUE_MAX", "8") or 8))
+# Detection normally wins. One aged QA request may run after this wait so a
+# continuously active camera cannot permanently starve an accepted question.
+BATCH_QA_MAX_WAIT_SEC = max(0.0, float(os.environ.get("VLM_QA_MAX_WAIT_SEC", "20") or 20))
+
+
+class QueueFullError(RuntimeError):
+    """The bounded inference queue cannot accept another image payload."""
+
+
+def wait_for_result(future):
+    """Cancel timed-out work only if model preparation has not started."""
+    try:
+        return future.result(timeout=BATCH_TIMEOUT_SEC)
+    except concurrent.futures.TimeoutError:
+        # Future.cancel() returns False once the scheduler has claimed it.
+        # Generation that is already running must finish without interruption.
+        future.cancel()
+        raise
 
 
 class _Item:
     __slots__ = ("frames", "labels", "max_new_tokens", "few_shot",
-                 "with_alert", "with_actions", "with_risks", "future", "behaviors", "queued_at", "qa")
+                 "with_alert", "with_actions", "with_risks", "future", "behaviors", "queued_at", "qa", "deadline")
 
     def __init__(self, frames, labels, n, few, alert, actions, future,
                  risks=False, behaviors=None, qa=None):
@@ -235,6 +256,7 @@ class _Item:
         self.behaviors = behaviors
         self.qa = qa
         self.queued_at = time.perf_counter()
+        self.deadline = self.queued_at + BATCH_TIMEOUT_SEC
 
 
 class Batcher:
@@ -244,11 +266,21 @@ class Batcher:
     但它的核心收益（连续批处理）用几十行就能拿到一大部分。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, max_queue: int | None = None,
+                 qa_max_wait_sec: float | None = None,
+                 max_qa_queue: int | None = None) -> None:
         self.q: list[_Item] = []
         self.cv = threading.Condition()
         self.thread: threading.Thread | None = None
-        self.stats = {"batches": 0, "items": 0, "max_batch": 0}
+        self.max_queue = max(1, BATCH_QUEUE_MAX if max_queue is None else int(max_queue))
+        self.max_qa_queue = min(self.max_queue, max(1, BATCH_QA_QUEUE_MAX
+                               if max_qa_queue is None else int(max_qa_queue)))
+        self.qa_max_wait_sec = max(0.0, BATCH_QA_MAX_WAIT_SEC if qa_max_wait_sec is None
+                                   else float(qa_max_wait_sec))
+        self._last_batch_qa = False
+        self.stats = {"batches": 0, "items": 0, "max_batch": 0,
+                      "cancelled": 0, "expired": 0, "rejected": 0,
+                      "qa_wait_protected": 0}
 
     def start(self) -> None:
         if self.thread is not None:
@@ -257,7 +289,8 @@ class Batcher:
                                        name="vlm-batcher")
         self.thread.start()
         print(f"[batch] 动态批量已启用：最多 {BATCH_MAX} 个/批，"
-              f"凑批等待 {BATCH_WAIT_MS}ms", flush=True)
+              f"凑批等待 {BATCH_WAIT_MS}ms，检测优先，排队上限 {self.max_queue}，"
+              f"问答排队上限 {self.max_qa_queue}，问答等待保护 {self.qa_max_wait_sec:g}s", flush=True)
 
     def submit(self, frames, labels, max_new_tokens, few_shot, with_alert,
                with_actions, with_risks=False, behaviors=None, qa=None):
@@ -265,41 +298,97 @@ class Batcher:
         it = _Item(frames, labels, max_new_tokens, few_shot, with_alert,
                    with_actions, fut, with_risks, behaviors, qa)
         with self.cv:
+            self._prune_queue(time.perf_counter())
+            if (len(self.q) >= self.max_queue or
+                    (qa is not None and sum(it.qa is not None for it in self.q) >= self.max_qa_queue)):
+                self.stats["rejected"] += 1
+                raise QueueFullError("推理队列已满，请稍后重试")
             self.q.append(it)
             self.cv.notify()
         return fut
 
+    def _prune_queue(self, now: float) -> None:
+        """Drop abandoned payloads before capacity checks and GPU selection."""
+        pending = []
+        for it in self.q:
+            if it.future.cancelled():
+                self.stats["cancelled"] += 1
+            elif now >= it.deadline:
+                # Atomically claim before setting an exception, in case the
+                # HTTP waiter concurrently cancels the same Future.
+                if it.future.set_running_or_notify_cancel():
+                    it.future.set_exception(concurrent.futures.TimeoutError("推理请求排队超时"))
+                    self.stats["expired"] += 1
+                else:
+                    self.stats["cancelled"] += 1
+            else:
+                pending.append(it)
+        self.q = pending
+
+    def _select_mode(self, now: float) -> tuple[bool, bool]:
+        detection = any(it.qa is None for it in self.q)
+        oldest_qa = next((it for it in self.q if it.qa is not None), None)
+        protect_qa = (detection and not self._last_batch_qa and oldest_qa is not None and
+                      now - oldest_qa.queued_at >= self.qa_max_wait_sec)
+        return not detection or protect_qa, protect_qa
+
+    def snapshot(self) -> dict:
+        with self.cv:
+            return {**self.stats, "queued": len(self.q),
+                    "queued_detection": sum(it.qa is None for it in self.q),
+                    "queued_qa": sum(it.qa is not None for it in self.q),
+                    "queue_limit": self.max_queue,
+                    "qa_queue_limit": self.max_qa_queue,
+                    "qa_max_wait_sec": self.qa_max_wait_sec,
+                    "priority": "detection", "max_batch": BATCH_MAX,
+                    "wait_ms": BATCH_WAIT_MS}
+
     def _take_batch(self) -> list[_Item]:
         with self.cv:
+            self._prune_queue(time.perf_counter())
             while not self.q:
                 self.cv.wait(timeout=1.0)
+                self._prune_queue(time.perf_counter())
                 if not self.q:
                     cache = STATE.get("vision_cache")
                     if cache is not None:
                         cache._expire(time.monotonic())
                     return []
-            # Long QA answers must not lengthen a detection batch's token budget.
-            mode = self.q[0].qa is not None
-            boundary = next((i for i, it in enumerate(self.q) if (it.qa is not None) != mode), len(self.q))
-            batch = self.q[:min(BATCH_MAX, boundary)]
-            del self.q[:len(batch)]
-            # 还有余量就再等一小会儿，让"几乎同时到"的请求凑进同一批。
-            # 等待时间很短（默认 25ms）：用户看到的延迟增加有限，
-            # 但批量带来的是数倍吞吐 —— 这笔交易在任何监控场景都划算。
-            if len(batch) < BATCH_MAX and BATCH_WAIT_MS > 0:
-                deadline = time.time() + BATCH_WAIT_MS / 1000.0
-                while len(batch) < BATCH_MAX:
-                    remain = deadline - time.time()
-                    if remain <= 0:
-                        break
-                    self.cv.wait(timeout=remain)
-                    if self.q:
-                        boundary = next((i for i, it in enumerate(self.q) if (it.qa is not None) != mode), len(self.q))
-                        more = self.q[:min(BATCH_MAX - len(batch), boundary)]
-                        del self.q[:len(more)]
-                        batch.extend(more)
-                        if boundary == 0:
-                            break
+            collect_until = time.perf_counter() + BATCH_WAIT_MS / 1000.0
+            while self.q:
+                now = time.perf_counter()
+                mode, protected = self._select_mode(now)
+                # QA answers are intentionally single-request batches: the
+                # fairness concession blocks cameras for one answer at most.
+                limit = 1 if mode else max(1, BATCH_MAX)
+                count = sum((it.qa is not None) == mode for it in self.q)
+                remain = collect_until - now
+                if count >= limit or remain <= 0:
+                    break
+                # Keep payloads in q during the short batching wait: capacity
+                # stays bounded and new detections can replace the QA choice.
+                self.cv.wait(timeout=remain)
+                self._prune_queue(time.perf_counter())
+            if not self.q:
+                return []
+            mode, protected = self._select_mode(time.perf_counter())
+            limit = 1 if mode else max(1, BATCH_MAX)
+            batch, pending = [], []
+            for it in self.q:
+                if (it.qa is not None) == mode and len(batch) < limit:
+                    # Claim before image decoding. A cancelled or timed-out
+                    # request must never spend GPU time; running work is kept.
+                    if it.future.set_running_or_notify_cancel():
+                        batch.append(it)
+                    else:
+                        self.stats["cancelled"] += 1
+                else:
+                    pending.append(it)
+            self.q = pending
+            if batch:
+                self._last_batch_qa = mode
+            if batch and protected:
+                self.stats["qa_wait_protected"] += 1
             return batch
 
     def _loop(self) -> None:
@@ -307,9 +396,10 @@ class Batcher:
             batch = self._take_batch()
             if not batch:
                 continue
-            self.stats["batches"] += 1
-            self.stats["items"] += len(batch)
-            self.stats["max_batch"] = max(self.stats["max_batch"], len(batch))
+            with self.cv:
+                self.stats["batches"] += 1
+                self.stats["items"] += len(batch)
+                self.stats["max_batch"] = max(self.stats["max_batch"], len(batch))
             try:
                 results = infer_batch(batch)
             except Exception as e:                      # noqa: BLE001
@@ -517,8 +607,7 @@ class Handler(BaseHTTPRequestHandler):
                 ),
                 "behaviors": [b.id for b in bs.enabled] if bs else [],
                 "pid": os.getpid(),
-                "batcher": {**BATCHER.stats, "queued": len(BATCHER.q),
-                            "max_batch": BATCH_MAX, "wait_ms": BATCH_WAIT_MS},
+                "batcher": BATCHER.snapshot(),
                 "vision_cache": ({"images": len(STATE["vision_cache"].entries),
                                   "bytes": STATE["vision_cache"].bytes,
                                   "hits": STATE["vision_cache"].hits,
@@ -577,12 +666,17 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, TypeError) as exc:
                 return self._json(400, {"error": str(exc)})
             try:
-                res = BATCHER.submit(body["frames"], [], tokens, False, False, False, qa=qa).result(timeout=BATCH_TIMEOUT_SEC)
+                res = wait_for_result(BATCHER.submit(body["frames"], [], tokens, False, False, False, qa=qa))
                 res.update({"ok": res.get("error") is None, "model": STATE["model_name"],
                             "hostname": socket.gethostname()})
                 if res.get("error"):
                     STATE["errors"] += 1
                 return self._json(200, res)
+            except QueueFullError as exc:
+                return self._json(503, {"error": str(exc), "retryable": True})
+            except concurrent.futures.TimeoutError:
+                STATE["errors"] += 1
+                return self._json(504, {"error": "推理等待超时，尚未开始的请求已取消", "retryable": True})
             except Exception as exc:
                 STATE["errors"] += 1
                 return self._json(500, {"error": f"{type(exc).__name__}: {exc}"})
@@ -626,6 +720,11 @@ class Handler(BaseHTTPRequestHandler):
                 if res.get("error"):
                     STATE["errors"] += 1
                 return self._json(200, res)
+            except QueueFullError as exc:
+                return self._json(503, {"error": str(exc), "retryable": True})
+            except concurrent.futures.TimeoutError:
+                STATE["errors"] += 1
+                return self._json(504, {"error": "推理等待超时，尚未开始的请求已取消", "retryable": True})
             except Exception as e:
                 STATE["errors"] += 1
                 print("[infer] 异常:\n" + traceback.format_exc(), flush=True)

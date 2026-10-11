@@ -56,9 +56,8 @@ class ProtocolTests(unittest.TestCase):
             detection = batcher.submit([], [], 512, False, False, False)
             qa = batcher.submit([], [], 768, False, False, False, qa={"question": "内容"})
             later = batcher.submit([], [], 512, False, False, False)
-            self.assertEqual([it.future for it in batcher._take_batch()], [detection])
+            self.assertEqual([it.future for it in batcher._take_batch()], [detection, later])
             self.assertEqual([it.future for it in batcher._take_batch()], [qa])
-            self.assertEqual([it.future for it in batcher._take_batch()], [later])
 
     def test_model_http_qa_health_and_schema_boundaries(self):
         import requests

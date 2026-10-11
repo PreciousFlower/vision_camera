@@ -13,13 +13,17 @@
       } catch(e) { /* Storage restrictions must not disable detection. */ }
     }
     get supported(){return !!(this.synth&&this.Utterance);}
-    key(job,a){return JSON.stringify([job,a.behavior_id||a.name,Number(a.t_start)||0,a.severity||'medium']);}
+    key(job,a,live=false){
+      const evidenceTime=a.evidence_time_sec;
+      const time=live&&typeof evidenceTime==='number'&&Number.isFinite(evidenceTime)&&evidenceTime>=0?evidenceTime:Number(a.t_start)||0;
+      return JSON.stringify([job,a.behavior_id||a.name,time,a.severity||'medium']);
+    }
     alerts(values){return Array.isArray(values)?values.filter(a=>a&&typeof a==='object'&&typeof a.behavior_id==='string'&&a.behavior_id&&Number.isFinite(Number(a.t_start))):[];}
     remember(key){
       this.seen.add(key);while(this.seen.size>2000)this.seen.delete(this.seen.values().next().value);
       try{this.storage.setItem('civility-spoken-alerts',JSON.stringify([...this.seen]));}catch(e){}
     }
-    seed(job,alerts){for(const a of this.alerts(alerts))this.remember(this.key(job,a));}
+    seed(job,alerts,{live=false}={}){for(const a of this.alerts(alerts))this.remember(this.key(job,a,live));}
     begin(job){
       for(const key of this.seen){try{if(JSON.parse(key)[0]===job)this.seen.delete(key);}catch(e){this.seen.delete(key);}}
       this.queue=this.queue.filter(item=>item.job!==job);
@@ -43,7 +47,7 @@
     }
     notify(job,alerts,{demo=false,live=false}={}){
       for(const a of this.alerts(alerts)){
-        const key=this.key(job,a);if(this.seen.has(key))continue;this.remember(key);
+        const key=this.key(job,a,live);if(this.seen.has(key))continue;this.remember(key);
         if(!this.enabled)continue;
         const name=String(a.behavior_name||a.name||a.behavior_id||'现场风险').slice(0,40);
         const reason=String(a.reason||a.alert_reason||a.observable||'').slice(0,80);

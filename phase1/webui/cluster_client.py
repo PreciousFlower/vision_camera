@@ -602,7 +602,9 @@ class ServiceSession:
             try:
                 r = requests.post(f"{self.base_url()}/infer", json=payload,
                                   timeout=300)
-                if r.status_code < 500 or attempt == 2:
+                # Busy queues need time to drain. A timed-out request may
+                # already be running on the GPU; resubmitting duplicates work.
+                if r.status_code < 500 or r.status_code in (503, 504) or attempt == 2:
                     break
             except requests.exceptions.RequestException as e:
                 last_err = e

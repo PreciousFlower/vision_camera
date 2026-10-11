@@ -341,6 +341,8 @@ class StreamReader:
         self._last_preview = 0.0
         self._last_encoded = 0.0
         self.history_jpegs = deque(maxlen=256)  # <=32s at 8fps; RAM only.
+        from .motion_highlights import MotionHighlights
+        self.motion_highlights = MotionHighlights(limit=256)
 
     # ── 生命周期 ──
     def start(self) -> None:
@@ -358,6 +360,7 @@ class StreamReader:
         self._thread = None
         with self.lock:
             self.history_jpegs.clear()
+            self.motion_highlights.clear()
             self.frame = None
             self.jpeg = None
 
@@ -409,6 +412,7 @@ class StreamReader:
                 if jpeg is not None:
                     self.jpeg = jpeg
                     self.history_jpegs.append((now, jpeg))
+                    self.motion_highlights.add(now, frame)
                 self.seq += 1
                 self.t = now
                 self.frames_read += 1
@@ -436,6 +440,10 @@ class StreamReader:
     def snapshot_history(self):
         with self.lock:
             return list(self.history_jpegs)
+
+    def snapshot_highlights(self):
+        with self.lock:
+            return list(self.motion_highlights.scores)
 
     # ── 给取样方：取"此刻最新"的一帧 ──
     def take_newer(self, last_seq: int, timeout: float = 2.0):

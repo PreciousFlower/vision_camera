@@ -106,7 +106,7 @@ def main() -> int:
                 segs.append("*")
             elif re.fullmatch(r"\$\{[^}]*\}", s):    # 前端模板串里的 ${jid}
                 segs.append("*")
-            elif re.fullmatch(r"\d+", s):            # 末段写死的 0（帧序号）
+            elif re.fullmatch(r"(?:\d+|f_\d+)", s):  # 帧序号 0 或证据 ID f_0
                 segs.append("*")
             else:
                 segs.append(s)

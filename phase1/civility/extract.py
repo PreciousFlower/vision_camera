@@ -20,7 +20,7 @@ import re
 import shutil
 import subprocess
 from bisect import bisect_left
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .vlm import WindowRequest
@@ -47,6 +47,8 @@ class Window:
     #     决定。两边各自知道自己的序号，所以由**构造窗口的人**填。
     #     -1 = 未提供（旧调用方/序列化回来的记录），调用方回退旧算法。
     idx0: int = -1
+    # Optional live sampling provenance; timestamps remain actual sampled frames.
+    sampling: dict = field(default_factory=dict)
 
     @property
     def frame_indices(self) -> list[int]:

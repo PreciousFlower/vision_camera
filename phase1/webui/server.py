@@ -106,6 +106,7 @@ def runtime_source_signature() -> str:
     files = sorted((PROJECT / "civility").glob("*.py")) + sorted(
         (PROJECT / "cluster").glob("*.py")) + [
         Path(__file__), HERE / "cluster_client.py", HERE / "capture.py", HERE / "video_library.py",
+        HERE / "motion_highlights.py",
         PROJECT / "cluster/serve-vlm.sbatch"]
     digest = hashlib.sha256()
     for path in files:
@@ -202,8 +203,14 @@ class JobRecord:
     context_frames: list = field(default_factory=list)
     recent_frame_files: dict = field(default_factory=dict)
     last_recent_wall: float | None = None
+    last_model_frame_at: float | None = None
+    live_metrics: dict = field(default_factory=dict)
 
     def summary(self) -> dict:
+        age = self.result_age_sec
+        if (self.is_live and self.source_kind != "file" and self.last_model_frame_at is not None
+                and self.state in ("capturing", "running")):
+            age = max(0.0, time.time() - self.last_model_frame_at)
         return {
             "job_id": self.job_id,
             "filename": self.filename,
@@ -216,8 +223,9 @@ class JobRecord:
             "error": self.error,
             "created": self.created,
             "avg_latency": round(self.avg_latency, 2),
-            "result_age_sec": round(self.result_age_sec, 2),
+            "result_age_sec": round(age, 2),
             "behind": self.behind,
+            "live_metrics": dict(self.live_metrics),
             "source_kind": self.source_kind,
             "is_live": self.is_live,
             "continuous": self.continuous,
@@ -504,14 +512,31 @@ def _refresh_alerts(job: JobRecord, video_label: str, agg_cfg: dict) -> None:
             continue
         key = alert.behavior_id
         last = job.alert_last_by_type.get(key)
+        timing = _live_alert_timing(job, alert)
+        # Motion-preserved windows can start long before the new violation.
+        # Only the new live sampling protocol may change dedup's time basis;
+        # file analyses and historical/legacy records retain their semantics.
+        real_sampling = (job.is_live and job.source_kind != "file"
+            and any(r.get("sampling") and r.get("frame_times")
+                    for r in job.window_results if r.get("window_id") in alert.window_ids))
+        dedup_time = (timing.get("evidence_time_sec") if real_sampling else alert.t_start)
+        if dedup_time is None:
+            dedup_time = alert.t_end
         upgraded = (last is not None and key.startswith("ai_risk:")
                     and severity_order.get(alert.severity, 0)
                     > severity_order.get(last[1], 0))
         if last is not None and not upgraded:
-            if alert.t_start - last[0] < float(agg_cfg.get("dedup_sec", 30)):
+            if dedup_time - last[0] < float(agg_cfg.get("dedup_sec", 30)):
                 continue
-        job.alerts.append(alert.to_dict())
-        job.alert_last_by_type[key] = (alert.t_start, alert.severity)
+        payload = alert.to_dict()
+        payload.update(timing)
+        job.alerts.append(payload)
+        job.alert_last_by_type[key] = (dedup_time, alert.severity)
+        if timing:
+            age = timing["evidence_age_sec"]
+            job.live_metrics["last_alert_age_sec"] = age
+            if age is not None:
+                job.live_metrics["max_alert_age_sec"] = max(age, job.live_metrics.get("max_alert_age_sec") or 0)
     if results:
         job.alert_checked_until = max(r.t_end for r in results)
     job.alerts = job.alerts[-job.max_kept_alerts:]
@@ -520,6 +545,33 @@ def _refresh_alerts(job: JobRecord, video_label: str, agg_cfg: dict) -> None:
         newest = sorted(job.alert_last_by_type.items(), key=lambda kv: kv[1][0],
                         reverse=True)[:job.max_kept_alerts]
         job.alert_last_by_type = dict(newest)
+
+
+def _live_alert_timing(job: JobRecord, alert) -> dict:
+    """Use the model's actual evidence references, not the newer window tail.
+
+    Open risks may have no numbered evidence; leave its age unknown and expose
+    the window image age separately. Neither age claims an exact event onset.
+    """
+    published = time.time()
+    if not job.is_live or job.source_kind == "file" or job.capture_started_at is None:
+        return {}
+    records = [r for r in job.window_results if r.get("window_id") in alert.window_ids]
+    evidence_times = []
+    for rec in records:
+        item = (rec.get("violations") or {}).get(alert.behavior_id) or {}
+        refs = item.get("evidence") or {}
+        times = rec.get("frame_times") or []
+        if not isinstance(refs, dict):
+            continue
+        evidence_times.extend(times[ref - 1] for ref in refs.values()
+                              if type(ref) is int and 1 <= ref <= len(times))
+    age = max(0.0, published - job.capture_started_at - max(evidence_times)) if evidence_times else None
+    window_age = max(0.0, published - job.capture_started_at - alert.t_end)
+    return {"published_at": published, "notification_age_sec": round(age, 3) if age is not None else None,
+            "evidence_age_sec": round(age, 3) if age is not None else None,
+            "window_age_sec": round(window_age, 3),
+            "evidence_time_sec": max(evidence_times) if evidence_times else None}
 
 
 def slice_video_to_windows(video: Path, job: JobRecord) -> list:
@@ -704,12 +756,21 @@ def capture_recent_windows(job: JobRecord, reader) -> list:
     """Select fresh windows from continuous capture, avoiding stale prefetched batches."""
     import math
     from civility.extract import Window, sample_evenly
+    from .motion_highlights import action_frames, merge_sampling
     live = STATE.cfg.get("live") or {}
     ex = STATE.cfg.get("extract") or {}
     stride = float(live.get("window_stride_sec", 2))
     count = int(live.get("continuous_batch_windows", 2))
     n_frames = int(live.get("frames_per_window", 4))
     context = max(0.0, float(live.get("context_sec", 4)))
+    # The reader retains at most 256 encoded images at 8fps. Oversized live
+    # settings are a configuration error, not a broken camera to reconnect.
+    ring = getattr(reader, "history_jpegs", None)
+    capacity = (getattr(ring, "maxlen", None) or 256) / 8.0
+    requested_span = stride * count + context
+    if requested_span > capacity:
+        raise ValueError(f"实时采样配置需保留 {requested_span:g} 秒画面，超过当前约 {capacity:g} 秒缓存；"
+                         "请缩小采样范围或增加实时帧缓存容量")
     if job.capture_started_at is None:
         job.capture_started_at = time.time()
     earliest = (job.last_recent_wall if job.last_recent_wall is not None
@@ -727,16 +788,33 @@ def capture_recent_windows(job: JobRecord, reader) -> list:
     if job.stop_flag:
         return []
     latest = history[-1][0]
+    snapshot_highlights = getattr(reader, "snapshot_highlights", None)
+    highlights = snapshot_highlights() if callable(snapshot_highlights) else []
+    previous_end = job.last_recent_wall
     directory = Path(STATE.cfg["paths"]["frames_dir"]) / job.job_id
     directory.mkdir(parents=True, exist_ok=True)
     windows = []
     for index in range(count):
         end = latest - stride * (count - index - 1)
         start = end - stride
-        fresh = sample_evenly([(t, data) for t, data in history if start < t <= end], n_frames)
+        limit = max(2, int(ex.get("max_frames_per_window", 18)))
+        fresh = sample_evenly([(t, data) for t, data in history if start < t <= end], min(n_frames, limit))
         prior = sample_evenly([(t, data) for t, data in history if start-context <= t <= start],
                              math.ceil(context/stride) * n_frames) if context else []
-        selected = sample_evenly(prior+fresh, int(ex.get("max_frames_per_window", 18)))
+        normal_start = start - context
+        gap_sec = max(0.0, normal_start - previous_end) if index == 0 and previous_end is not None else 0.0
+        lost_sec = min(gap_sec, max(0.0, history[0][0] - previous_end)) if gap_sec else 0.0
+        expected_start = max(job.capture_started_at, normal_start)
+        lost_sec += max(0.0, min(end, history[0][0]) - expected_start)
+        # The first window may preserve an action from the skipped timeline;
+        # the last window always remains the most recent normal window.
+        budget = min(limit, len(prior) + len(fresh))
+        anchors = min(len(prior), 2)
+        spare = max(0, budget - len(fresh) - anchors)
+        retained = action_frames(history, highlights,
+            start=max(history[0][0], previous_end if gap_sec else normal_start),
+            end=start, max_frames=min(6, spare)) if index == 0 else []
+        selected = merge_sampling(prior, fresh, retained, budget=budget)
         if len(fresh) < 2:
             raise ClusterError("近期画面缺少连续帧，正在重新连接")
         source = []
@@ -748,12 +826,24 @@ def capture_recent_windows(job: JobRecord, reader) -> list:
                 job.frame_idx_offset += 1
                 job.recent_frame_files[timestamp] = path
             source.append((timestamp-job.capture_started_at, str(path)))
+        retained_count = sum(t in {ts for ts, _ in retained} for t, _ in selected)
+        sampling = {"mode": "recent_with_motion" if retained_count else "recent",
+                    "gap_sec": round(gap_sec, 3), "retained_action_frames": retained_count,
+                    "unexamined_gap_sec": round(lost_sec, 3),
+                    "capture_age_sec": round(max(0.0, time.time() - end), 3),
+                    "latest_frame_at": selected[-1][0],
+                    "frame_times": [t - job.capture_started_at for t, _ in selected]}
         windows.append(Window(window_id=f"{job.job_id}__w{job.window_seq:05d}",
             video=job.filename,t_start=round(source[0][0],2),t_end=round(source[-1][0],2),
             frames=[p for _,p in source],labels=[f"t={t:.1f}s" for t,_ in source],
-            idx0=frame_index_of(source[0][1])))
+            idx0=frame_index_of(source[0][1]), sampling=sampling))
         job.window_seq += 1
     job.last_recent_wall = latest
+    first = windows[0].sampling
+    job.live_metrics.update(capture_age_sec=round(max(0.0, time.time() - latest), 3),
+        sampled_gap_sec=first["gap_sec"], retained_action_frames=first["retained_action_frames"],
+        unexamined_gap_sec=first["unexamined_gap_sec"],
+        batch_processing_sec=round(job.last_batch_sec, 3))
     cutoff = latest-context-stride*count
     job.recent_frame_files = {t:p for t,p in job.recent_frame_files.items() if t>=cutoff}
     job.windows_total = len(windows)
@@ -1147,7 +1237,8 @@ def run_job(job_id: str) -> None:
             for w in windows:
                 sc = -1.0
                 skip = False
-                if motion_gate and job.continuous and job.window_results:
+                has_retained_action = bool(w.sampling.get("retained_action_frames"))
+                if motion_gate and job.continuous and job.window_results and not has_retained_action:
                     try:
                         from .capture import frame_motion
 
@@ -1222,6 +1313,8 @@ def run_job(job_id: str) -> None:
                         "frame0": int(getattr(w, "idx0", -1)),
                         "frame_indices": w.frame_indices,
                         "frame_labels": list(w.labels),
+                        "frame_times": list(w.sampling.get("frame_times", [])),
+                        "sampling": dict(w.sampling),
                         "latency": 0.0,
                         "skipped": True,
                         "motion": round(score, 2),
@@ -1250,6 +1343,8 @@ def run_job(job_id: str) -> None:
                         "frame0": rec.get("frame0", -1),
                         "frame_indices": rec.get("frame_indices", []),
                         "frame_labels": rec.get("frame_labels", []),
+                        "sampling": rec.get("sampling", {}),
+                        "live_metrics": dict(job.live_metrics),
                         "frames": rec.get("frames", 0),
                         "skipped": True, "motion": round(score, 2),
                         "tokens_prompt": 0,
@@ -1261,6 +1356,7 @@ def run_job(job_id: str) -> None:
                         "type": "alerts", "alerts": job.alerts,
                         "cumulative": total_done,
                         "behind": job.behind,
+                        "live_metrics": dict(job.live_metrics),
                         "index": i + 1, "total": len(windows),
                     })
                     STATE.log_line(
@@ -1300,8 +1396,11 @@ def run_job(job_id: str) -> None:
                     parsed = sanitize(parsed, batch_behaviors, frame_count=len(w.frames))
                 if parsed is not None and not res.get("error"):
                     job.last_model_t_end = w.t_end
+                    if job.is_live and job.source_kind != "file" and job.capture_started_at is not None:
+                        job.last_model_frame_at = w.sampling.get("latest_frame_at", job.capture_started_at + w.t_end)
                 if job.is_live and job.source_kind != "file" and job.capture_started_at is not None:
-                    job.result_age_sec = max(0.0, time.time() - job.capture_started_at - w.t_end)
+                    latest_at = w.sampling.get("latest_frame_at", job.capture_started_at + w.t_end)
+                    job.result_age_sec = max(0.0, time.time() - latest_at)
                 evidence_warnings = []
                 for bid, value in (parsed or {}).get("violations", {}).items():
                     if value.get("evidence_issues"):
@@ -1324,6 +1423,8 @@ def run_job(job_id: str) -> None:
                     "frame0": int(getattr(w, "idx0", -1)),
                     "frame_indices": w.frame_indices,
                     "frame_labels": list(w.labels),
+                    "frame_times": list(w.sampling.get("frame_times", [])),
+                    "sampling": dict(w.sampling),
                     "latency": res.get("latency_sec"),
                     "roundtrip_sec": res.get("roundtrip_sec"),
                     "timing": res.get("timing"),
@@ -1397,6 +1498,8 @@ def run_job(job_id: str) -> None:
                     "roundtrip_sec": rec.get("roundtrip_sec"),
                     "timing": rec.get("timing"),
                     "result_age_sec": rec.get("result_age_sec"),
+                    "sampling": rec.get("sampling", {}),
+                    "live_metrics": dict(job.live_metrics),
                     # ★ 帧号：前端缩略图用它①做缓存破坏 ②定位"中间帧"
                     "frame0": rec.get("frame0", -1),
                     "frame_indices": rec.get("frame_indices", []),
@@ -1425,6 +1528,7 @@ def run_job(job_id: str) -> None:
                     "alerts": job.alerts,
                     "cumulative": total_done,
                     "behind": job.behind,
+                    "live_metrics": dict(job.live_metrics),
                     "index": i + 1,
                     "total": len(windows),
                 })
@@ -1471,6 +1575,7 @@ def run_job(job_id: str) -> None:
                 recent_source = (stream is not None and job.source_kind != "file" and
                                  callable(getattr(stream.reader, "snapshot_history", None)))
                 job.last_batch_sec = time.time() - (inference_t0 if recent_source else batch_t0)
+                job.live_metrics["batch_processing_sec"] = round(job.last_batch_sec, 3)
                 if recent_source:
                     coverage = len(windows) * float(_live.get("window_stride_sec", 2))
                     job.behind = job.last_batch_sec > coverage * 1.05
@@ -2070,6 +2175,13 @@ def create_app():
             job.window_seq = 0
             job.frame_idx_offset = 0
             job.capture_started_at = None
+            job.last_recent_wall = None
+            job.last_model_frame_at = None
+            job.recent_frame_files.clear()
+            job.context_frames.clear()
+            job.live_metrics.clear()
+            job.result_age_sec = 0.0
+            job.last_batch_sec = 0.0
             job.windows_seen = 0
             job.last_model_t_end = None
             job.alert_checked_until = -1.0

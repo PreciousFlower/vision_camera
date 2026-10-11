@@ -97,3 +97,4 @@ phase1/runs/test-video-validation/
 phase1/runs/video_analyses/
 phase1/runs/optimization-*.log
 phase1/runs/optimization-*.png
+phase1/runs/inference-priority-*.txt
