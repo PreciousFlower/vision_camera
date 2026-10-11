@@ -16,10 +16,13 @@
      "start": 2.0, "end": 10.0}
 未标注的行为一律视为该视频中**不存在**（即负例），这与 behaviors.yaml
 里"证据不足即判 false"的纪律一致。
+开放风险是例外：只有某视频明确标注了 `ai_risk:<类别>`，才评该视频的该类风险；
+其他开放风险告警单独记为未评分，不能用配置行为标注推断风险准确率。
 """
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -160,17 +163,40 @@ def score_events(
     labels: list[Label],
     bs: BehaviorSet,
 ) -> dict:
-    """告警级评分：一个标注区间最多只能被一条告警命中（避免刷召回）。"""
+    """告警级评分；开放风险仅在明确标注的视频与类别范围内评分。
+
+    一个标注区间最多只能被一条告警命中（避免刷召回）。历史配置行为仍按
+    未标注即负例评估；未知类别与没有对应风险标注的告警均单独记为未评分。
+    """
     per: dict[str, dict[str, int]] = {b.id: {"tp": 0, "fp": 0, "fn": 0} for b in bs.enabled}
+    configured_ids = set(per)
+    risk_scopes = {(Path(lb.video).name, lb.behavior_id) for lb in labels
+                   if re.fullmatch(r"ai_risk:[a-z][a-z0-9_]{0,63}", lb.behavior_id)}
+    risk_ids = {bid for _, bid in risk_scopes}
+    for bid in sorted(risk_ids):
+        per.setdefault(bid, {"tp": 0, "fp": 0, "fn": 0})
     matched: set[int] = set()
+    scored_total = open_risk_total = open_risk_scored_total = 0
+    unscored: dict[str, int] = {}
 
     for a in alerts:
         vname = Path(a.video).name
+        is_risk = a.behavior_id.startswith("ai_risk:") or a.source == "ai_risk"
+        if is_risk:
+            open_risk_total += 1
+            can_score = (vname, a.behavior_id) in risk_scopes
+        else:
+            can_score = a.behavior_id in configured_ids
+        if not can_score:
+            unscored[a.behavior_id] = unscored.get(a.behavior_id, 0) + 1
+            continue
+        scored_total += 1
+        open_risk_scored_total += int(is_risk)
         hit_idx = None
         for i, lb in enumerate(labels):
             if i in matched:
                 continue
-            if lb.video == vname and lb.behavior_id == a.behavior_id and lb.overlaps(a.t_start, a.t_end):
+            if Path(lb.video).name == vname and lb.behavior_id == a.behavior_id and lb.overlaps(a.t_start, a.t_end):
                 hit_idx = i
                 break
         if hit_idx is None:
@@ -187,11 +213,24 @@ def score_events(
     tp = sum(c["tp"] for c in per.values())
     fp = sum(c["fp"] for c in per.values())
     fn = sum(c["fn"] for c in per.values())
+
+    def summary(ids: set[str]) -> dict:
+        return _prf(*(sum(per[bid][key] for bid in ids) for key in ("tp", "fp", "fn")))
+
     return {
         "level": "event",
         "alerts_total": len(alerts),
+        "alerts_scored_total": scored_total,
+        "unscored_alerts_total": len(alerts) - scored_total,
+        "unscored_alerts_by_behavior": unscored,
+        "open_risk_alerts_total": open_risk_total,
+        "open_risk_alerts_scored_total": open_risk_scored_total,
+        "open_risk_alerts_unscored_total": open_risk_total - open_risk_scored_total,
+        "open_risk_annotation_scopes": len(risk_scopes),
         "per_behavior": per_out,
         "overall": _prf(tp, fp, fn),
+        "configured_overall": summary(configured_ids),
+        "open_risk_overall": summary(risk_ids),
     }
 
 
@@ -226,7 +265,7 @@ def render_report(win: dict, evt: dict, bs: BehaviorSet, stats: dict | None = No
         )
         return rows
 
-    lines += ["## 窗口级（模型 + Prompt 的真实能力）", ""]
+    lines += ["## 窗口级（配置行为的模型 + Prompt 表现）", ""]
     lines += table(win)
     lines += [
         "",
@@ -235,7 +274,22 @@ def render_report(win: dict, evt: dict, bs: BehaviorSet, stats: dict | None = No
         "## 告警级（经时序平滑后的系统表现）", "",
     ]
     lines += table(evt)
-    lines += ["", f"告警总数：{evt['alerts_total']}", ""]
+    scored_total = evt.get("alerts_scored_total", evt["alerts_total"])
+    lines += ["", f"告警总数：{evt['alerts_total']} ／ 已评分：{scored_total}"
+              f" ／ 未评分：{evt.get('unscored_alerts_total', 0)}", ""]
+    if evt.get("open_risk_alerts_total", 0) or evt.get("open_risk_annotation_scopes", 0):
+        lines += [
+            f"开放风险告警：{evt.get('open_risk_alerts_total', 0)}"
+            f" ／ 已评分：{evt.get('open_risk_alerts_scored_total', 0)}"
+            f" ／ 未评分：{evt.get('open_risk_alerts_unscored_total', 0)}",
+            "",
+            "开放风险只在该视频有明确 `ai_risk:<类别>` 标注时参与评分。"
+            "未标注风险告警不计为 TP 或 FP，也不参与精确率、召回率和 F1。"
+            "配置行为的窗口级指标不代表开放风险识别能力。",
+            "",
+        ]
+        if not evt.get("open_risk_annotation_scopes", 0):
+            lines += ["**尚无开放风险标注，不能据此报告判断风险准确率。**", ""]
 
     # 给出可执行的判读，而不是只丢一张表
     lines += ["## 判读与下一步", ""]
@@ -260,7 +314,8 @@ def render_report(win: dict, evt: dict, bs: BehaviorSet, stats: dict | None = No
         )
     lines.append("")
     lines.append(
-        "> 提醒：窗口级数字才是模型能力。如果窗口级很高而告警级很低，"
+        "> 提醒：配置行为的窗口级数字反映对应模型能力。比较同一配置行为时，"
+        "如果窗口级很高而告警级很低，"
         "问题在平滑参数（`window_k` / `min_hits`），不在 Prompt。"
     )
     return "\n".join(lines)

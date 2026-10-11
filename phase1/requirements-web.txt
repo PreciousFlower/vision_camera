@@ -1,0 +1,8 @@
+# 本机可视化网页（集群作业无需安装此文件）
+# python -m pip install -r requirements-web.txt
+-r requirements.txt
+fastapi
+uvicorn
+python-multipart
+opencv-python
+pillow

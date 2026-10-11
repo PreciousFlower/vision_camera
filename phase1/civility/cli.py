@@ -43,6 +43,14 @@ def _cfg(args):
     return cfg, bs
 
 
+def _request_options(cfg: dict) -> dict[str, bool]:
+    """保持命令行、云端和集群的识别请求与当前告警设置一致。"""
+    agg = cfg.get("aggregate") or {}
+    return {"with_alert": str(agg.get("mode") or "").lower() == "ai",
+            "with_actions": False,
+            "with_risks": bool(agg.get("open_risks", True))}
+
+
 def _run_dir(cfg: dict, name: str) -> Path:
     d = Path(cfg["paths"]["results_dir"]) / name
     d.mkdir(parents=True, exist_ok=True)
@@ -200,7 +208,7 @@ def cmd_prompt(args) -> int:
     cfg, bs = _cfg(args)
     from .prompts import build_system_prompt
 
-    text = build_system_prompt(bs)
+    text = build_system_prompt(bs, **_request_options(cfg))
     out = Path(cfg["paths"]["results_dir"]) / "prompt-preview.txt"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
@@ -247,6 +255,7 @@ def cmd_extract(args) -> int:
             frames,
             window_stride_sec=float(dflt.get("window_stride_sec", 4.0)),
             max_frames_per_window=int(ex.get("max_frames_per_window", 4)),
+            window_duration_sec=float(ex.get("window_duration_sec", dflt.get("window_stride_sec", 4.0))),
         )
         all_windows += ws
         print(f"  {v.name}: {dur:.1f}s → {len(frames)} 帧 → {len(ws)} 个窗口")
@@ -273,7 +282,8 @@ def cmd_run(args) -> int:
         return 1
     windows = read_manifest(mp)
 
-    fp_ = behavior_fingerprint(bs)
+    options = _request_options(cfg)
+    fp_ = behavior_fingerprint(bs, **options)
     rd = _run_dir(cfg, Path(mp).parent.name if Path(mp).parent.name != "data" else "default")
     out_path = Path(args.out) if args.out else rd / f"windows-{fp_}.jsonl"
 
@@ -292,6 +302,7 @@ def cmd_run(args) -> int:
     stats = run_windows(
         windows, backend, bs, out_path,
         concurrency=conc, retry_failed=args.retry_failed,
+        **options,
     )
     stats["behavior_fingerprint"] = fp_
     write_summary(stats, rd / "run-stats.json")
@@ -316,7 +327,7 @@ def cmd_aggregate(args) -> int:
 
     mp = Path(args.manifest) if args.manifest else _manifest_path(cfg)
     rd = _run_dir(cfg, Path(mp).parent.name if Path(mp).parent.name != "data" else "default")
-    fp_ = behavior_fingerprint(bs)
+    fp_ = behavior_fingerprint(bs, **_request_options(cfg))
     in_path = Path(args.input) if args.input else rd / f"windows-{fp_}.jsonl"
 
     results = load_results(in_path)
@@ -355,7 +366,7 @@ def cmd_score(args) -> int:
 
     mp = Path(args.manifest) if args.manifest else _manifest_path(cfg)
     rd = _run_dir(cfg, Path(mp).parent.name if Path(mp).parent.name != "data" else "default")
-    fp_ = behavior_fingerprint(bs)
+    fp_ = behavior_fingerprint(bs, **_request_options(cfg))
     in_path = Path(args.input) if args.input else rd / f"windows-{fp_}.jsonl"
 
     results = load_results(in_path)
@@ -410,7 +421,10 @@ def cmd_stability(args) -> int:
     for i, w in enumerate(sample, 1):
         objs = []
         for _ in range(int(args.repeat)):
-            r = backend.infer(w.to_request(), bs)
+            req = w.to_request()
+            for key, value in _request_options(cfg).items():
+                setattr(req, key, value)
+            r = backend.infer(req, bs)
             if r.parsed:
                 objs.append(r.parsed)
         repeated[w.window_id] = objs
@@ -478,11 +492,14 @@ def cmd_cluster_prepare(args) -> int:
         "\n".join(json.dumps(w.__dict__, ensure_ascii=False) for w in windows) + "\n",
         encoding="utf-8",
     )
-    (pkg / "system_prompt.txt").write_text(build_system_prompt(bs), encoding="utf-8")
+    options = _request_options(cfg)
+    (pkg / "system_prompt.txt").write_text(
+        build_system_prompt(bs, **options), encoding="utf-8")
     (pkg / "behaviors.json").write_text(
         json.dumps(
             {
                 "defaults": bs.defaults,
+                "request_options": options,
                 "behaviors": [
                     {
                         "id": b.id,
@@ -491,6 +508,8 @@ def cmd_cluster_prepare(args) -> int:
                         "evidence_required": b.evidence_required,
                         "counter_examples": b.counter_examples,
                         "observable_cues": b.observable_cues,
+                        "evidence_checks": b.evidence_checks,
+                        "evidence_sequence": b.evidence_sequence,
                         "severity": b.severity,
                     }
                     for b in bs.enabled

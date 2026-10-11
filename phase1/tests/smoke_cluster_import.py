@@ -72,6 +72,8 @@ def main() -> int:
                 evidence_required=b.get("evidence_required", ""),
                 counter_examples=b.get("counter_examples") or [],
                 observable_cues=b.get("observable_cues") or [],
+                evidence_checks=b.get("evidence_checks", {}),
+                evidence_sequence=b.get("evidence_sequence", []),
                 severity=b.get("severity", "medium"),
             )
             for b in raw.get("behaviors", [])
@@ -167,12 +169,31 @@ def main() -> int:
             # ④ dict 形式与 list 形式都要支持
             #    （踩过的严重 bug：只认 list，导致 aggregate 拿 dict 回来时
             #      所有行为被判 false、告警永远为 0）
+            def positive_fixture(behavior):
+                evidence = {key: 1 for key in behavior.evidence_checks}
+                evidence.update({key: i + 1 for i, key in
+                                 enumerate(behavior.evidence_sequence)})
+                observables = {
+                    "smoking": "可辨烟支送至嘴唇并吸入，随后呼出烟雾",
+                    "littering": "同一纸杯由手中脱离、落到桶外地面，人物离开且未捡回",
+                    "queue_jumping": "有序队列中，一人从侧方进入两人之间，后方人员退让",
+                }
+                return {"violation": True, "confidence": 0.9,
+                        "observable": observables.get(behavior.id, "测试帧可见定义要求的全部动作"),
+                        "evidence": evidence}
+
             as_dict = {"scene": "测试",
-                       "violations": {b.id: {"violation": True, "confidence": 0.9,
-                                             "observable": "有依据"}
-                                      for b in bs.enabled}}
+                       "violations": {b.id: positive_fixture(b) for b in bs.enabled}}
             ok4, probs4 = validate(as_dict, bs, strict=True)
             assert ok4, f"dict 形式的 violations 不被接受: {probs4}"
+            frame_count = max([4] + [len(b.evidence_sequence) for b in bs.enabled])
+            normalized = sanitize(as_dict, bs, frame_count=frame_count)
+            assert all(v["violation"] for v in normalized["violations"].values()), \
+                "完整的可见事实与帧证据正例不应被降级"
+            as_list = {"scene": "测试", "violations": [
+                {"behavior_id": bid, **item} for bid, item in as_dict["violations"].items()]}
+            assert sanitize(as_list, bs, frame_count=frame_count) == normalized
+            assert sanitize(normalized, bs, frame_count=frame_count) == normalized
 
             s = sanitize(good, bs)
             assert set(s["violations"]) == {b.id for b in bs.enabled}

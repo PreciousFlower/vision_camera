@@ -61,7 +61,8 @@ def W(i: int, t0: float, hit: bool, conf: float = 0.95,
              "person_desc": "", "bbox": None, "alert": None, "alert_reason": ""}
         if b.id == BID:
             d.update(violation=hit, confidence=conf if hit else 0.0,
-                     observable="口鼻有烟雾" if hit else "无人吸烟")
+                     observable="清晰可辨的烟支送至嘴唇并吸入，随后呼出烟雾" if hit else "无人吸烟",
+                     evidence={key: 1 for key in b.evidence_checks} if hit else {})
             if alert is not None:
                 d["alert"] = alert
                 d["alert_reason"] = reason

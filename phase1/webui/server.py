@@ -22,10 +22,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import concurrent.futures
+import functools
+import hashlib
 import io
 import json
+import math
 import os
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -50,6 +54,7 @@ from civility.aggregate import derive_events          # noqa: E402
 from civility.config import load_behaviors, load_settings  # noqa: E402
 from civility.extract import build_windows, extract_frames, frame_index_of  # noqa: E402
 from civility.prompts import sanitize, build_system_prompt  # noqa: E402
+from civility.recognition import generation_budget, infer_with_review  # noqa: E402
 
 # ⚠️ FastAPI 的类型必须import在模块顶层。
 #    踩过的坑：把 `from fastapi import UploadFile` 写在 create_app() 内部，
@@ -65,6 +70,64 @@ from fastapi.responses import (  # noqa: E402
 )
 
 from .cluster_client import ClusterClient, ClusterError, ServiceSession  # noqa: E402
+from .video_library import VideoLibrary  # noqa: E402
+
+QA_BUSY = threading.Lock()
+
+
+@functools.lru_cache(maxsize=8)
+def _library_for(results: str, frames: str, data: str) -> VideoLibrary:
+    return VideoLibrary(Path(results) / "video_analyses", Path(frames), Path(data) / "uploads")
+
+
+def video_library() -> VideoLibrary:
+    paths = STATE.cfg["paths"]
+    return _library_for(str(paths["results_dir"]), str(paths["frames_dir"]), str(paths["data_dir"]))
+
+
+def archive_window(job, rec: dict) -> None:
+    if not getattr(job, "_archive_enabled", False):
+        return
+    try:
+        # A looping file repeats the same source; archive one complete pass.
+        if job.loop and getattr(job, "_archived_windows", 0) >= job.windows_total:
+            return
+        fps = float((STATE.cfg.get("extract") or {}).get("fps", 3))
+        saved = dict(rec)
+        saved["frame_times"] = [i / fps for i in rec.get("frame_indices", [])]
+        video_library().record(job, saved)
+        job._archived_windows = getattr(job, "_archived_windows", 0) + 1
+    except Exception as exc:
+        job._archive_error = f"保存视频分析窗口失败：{type(exc).__name__}: {exc}"
+        STATE.log_line(job._archive_error)
+
+
+def runtime_source_signature() -> str:
+    files = sorted((PROJECT / "civility").glob("*.py")) + sorted(
+        (PROJECT / "cluster").glob("*.py")) + [
+        Path(__file__), HERE / "cluster_client.py", HERE / "capture.py", HERE / "video_library.py",
+        PROJECT / "cluster/serve-vlm.sbatch"]
+    digest = hashlib.sha256()
+    for path in files:
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+LOADED_SOURCE_SIGNATURE = runtime_source_signature()
+
+
+def runtime_status() -> dict:
+    settings = Path(os.environ.get("CIVILITY_SETTINGS") or PROJECT / "config/settings.yaml")
+    changed = hashlib.sha256(settings.read_bytes()).hexdigest() != STATE.settings_signature
+    return {"protocol": 3, "restart_required": changed or runtime_source_signature() != LOADED_SOURCE_SIGNATURE,
+            "settings_changed": changed}
+
+
+def ensure_current_runtime() -> None:
+    if runtime_status()["restart_required"]:
+        raise HTTPException(409, "本机服务仍在使用旧代码或旧配置。请在原终端停止并重新启动网页服务，再刷新页面。")
+    if STATE.behaviors_changed():
+        STATE.reload_behaviors()
 
 # ─────────────────────────── 全局状态 ───────────────────────────
 
@@ -129,6 +192,16 @@ class JobRecord:
     # 上一批的总耗时（推理+采集），用来判断系统是否跟不上实时
     last_batch_sec: float = 0.0
     behind: bool = False
+    result_age_sec: float = 0.0
+    # 门控以视频时间为准；跳过窗口不是一次新的模型检查。
+    last_model_t_end: float | None = None
+    # 窗口会被裁剪，告警去重状态必须独立保留。
+    alert_checked_until: float = -1.0
+    alert_last_by_type: dict = field(default_factory=dict)
+    max_kept_alerts: int = 500
+    context_frames: list = field(default_factory=list)
+    recent_frame_files: dict = field(default_factory=dict)
+    last_recent_wall: float | None = None
 
     def summary(self) -> dict:
         return {
@@ -143,6 +216,8 @@ class JobRecord:
             "error": self.error,
             "created": self.created,
             "avg_latency": round(self.avg_latency, 2),
+            "result_age_sec": round(self.result_age_sec, 2),
+            "behind": self.behind,
             "source_kind": self.source_kind,
             "is_live": self.is_live,
             "continuous": self.continuous,
@@ -162,6 +237,8 @@ class AppState:
         #   data/frames/<job_id>，把页面上的历史画面搅乱。
         #   （tools/test_frame_cache.py 就是这么做的。）
         self.cfg = load_settings(os.environ.get("CIVILITY_SETTINGS") or None)
+        settings = Path(os.environ.get("CIVILITY_SETTINGS") or PROJECT / "config/settings.yaml")
+        self.settings_signature = hashlib.sha256(settings.read_bytes()).hexdigest()
         self.behaviors = load_behaviors(self.cfg["paths"]["behaviors"])
         self.session: ServiceSession | None = None
         self.jobs: dict[str, JobRecord] = {}
@@ -278,8 +355,8 @@ def check_orphans() -> list[dict]:
 
 
 def _active_job() -> bool:
-    return any(j.state in ("capturing", "running", "queued")
-               for j in STATE.jobs.values())
+    return QA_BUSY.locked() or any(j.state in ("capturing", "extracting", "running", "queued")
+               for j in STATE.jobs.copy().values())
 
 
 def watchdog_tick() -> str:
@@ -320,13 +397,14 @@ def watchdog_tick() -> str:
 
     # ── 2. 最长运行上限 ──
     if max_hours > 0 and ups > max_hours * 3600:
-        if _active_job() and (time.time() - STATE.cap_extended_at) > 1800:
-            STATE.cap_extended_at = time.time()
-            STATE.log_line(
-                f"⚠️ 服务已连续运行 {ups / 3600:.1f} 小时（超过上限 "
-                f"{max_hours:.1f} 小时），但**正在分析画面**，先不打断；"
-                f"30 分钟后再判断。若长期不用请点「停止并释放节点」。"
-            )
+        if _active_job():
+            if (time.time() - STATE.cap_extended_at) > 1800:
+                STATE.cap_extended_at = time.time()
+                STATE.log_line(
+                    f"⚠️ 服务已连续运行 {ups / 3600:.1f} 小时（超过上限 "
+                    f"{max_hours:.1f} 小时），但**正在分析画面**，先不打断；"
+                    f"30 分钟后再判断。若长期不用请点「停止并释放节点」。"
+                )
             return ""
         return _auto_release(
             f"服务已连续运行 {ups / 3600:.1f} 小时，达到自设上限 "
@@ -342,8 +420,12 @@ def _auto_release(why: str) -> str:
     try:
         cancelled = sess.stop(sweep_orphans=True) if sess else []
     except Exception as e:
-        STATE.log_line(f"⚠️ 自动释放时出错：{type(e).__name__}: {e}")
-        cancelled = []
+        STATE.auto_released = (
+            f"{why}。自动释放失败：{type(e).__name__}: {e}。"
+            "请重试「停止并释放节点」。"
+        )
+        STATE.log_line(f"⚠️ {STATE.auto_released}")
+        return STATE.auto_released
     STATE.auto_released = (
         f"{why}。已释放节点，共运行 {cost['uptime_text']}，"
         f"约省下 {cost['est_cost']:.2f} 元"
@@ -364,13 +446,26 @@ def _last_window_had_hit(job: JobRecord) -> bool:
     """
     if not job.window_results:
         return False
-    v = job.window_results[-1].get("violations") or {}
-    if not isinstance(v, dict):
-        return False
-    for item in v.values():
+    latest = job.window_results[-1]
+    v = latest.get("violations") or {}
+    for item in v.values() if isinstance(v, dict) else []:
         if isinstance(item, dict) and item.get("violation"):
             return True
-    return False
+    return any(isinstance(r, dict) and r.get("alert") is True
+               for r in (latest.get("risks") or []))
+
+
+def _should_skip_window(job: JobRecord, motion: float, threshold: float,
+                        t_end: float, recheck_sec: float,
+                        last_checked: float | None) -> bool:
+    """静止可省调用，但首窗、检查失败、风险后续和到期复检必须送模型。"""
+    if not job.continuous or not job.window_results or last_checked is None:
+        return False
+    if (job.window_results[-1].get("error")
+            or job.window_results[-1].get("evidence_warnings") or _last_window_had_hit(job)):
+        return False
+    return (0 <= motion < threshold
+            and t_end - last_checked < recheck_sec)
 
 
 def _refresh_alerts(job: JobRecord, video_label: str, agg_cfg: dict) -> None:
@@ -389,13 +484,42 @@ def _refresh_alerts(job: JobRecord, video_label: str, agg_cfg: dict) -> None:
             window_id=r["window_id"], video=video_label,
             t_start=r["t_start"], t_end=r["t_end"],
             parsed={"scene": r["scene"], "violations": r["violations"],
-                    "people": r.get("people") or []},
+                    "people": r.get("people") or [],
+                    "risks": r.get("risks") or []},
             raw=r["raw"], error=r["error"], backend="cluster",
         )
         for r in job.window_results
     ]
-    alerts = derive_events(results, STATE.behaviors, agg_cfg)
-    job.alerts = [a.to_dict() for a in alerts]
+    # 持续任务用独立状态去重。若先在裁剪后的窗口内去重，旧起点会压制
+    # 当前候选，导致达到 dedup_sec 后也无法产生新的提醒。
+    local_cfg = {**agg_cfg, "dedup_sec": 0} if job.continuous else agg_cfg
+    alerts = derive_events(results, STATE.behaviors, local_cfg)
+    if not job.continuous:
+        job.alerts = [a.to_dict() for a in alerts]
+        return
+    # 只接收本次新增窗口产生的告警，避免裁剪历史后重算的起点移动。
+    severity_order = {"low": 0, "medium": 1, "high": 2}
+    for alert in alerts:
+        if alert.t_end <= job.alert_checked_until:
+            continue
+        key = alert.behavior_id
+        last = job.alert_last_by_type.get(key)
+        upgraded = (last is not None and key.startswith("ai_risk:")
+                    and severity_order.get(alert.severity, 0)
+                    > severity_order.get(last[1], 0))
+        if last is not None and not upgraded:
+            if alert.t_start - last[0] < float(agg_cfg.get("dedup_sec", 30)):
+                continue
+        job.alerts.append(alert.to_dict())
+        job.alert_last_by_type[key] = (alert.t_start, alert.severity)
+    if results:
+        job.alert_checked_until = max(r.t_end for r in results)
+    job.alerts = job.alerts[-job.max_kept_alerts:]
+    if len(job.alert_last_by_type) > job.max_kept_alerts:
+        # 模型即使不断生成新类别，去重状态也不能无限增长。
+        newest = sorted(job.alert_last_by_type.items(), key=lambda kv: kv[1][0],
+                        reverse=True)[:job.max_kept_alerts]
+        job.alert_last_by_type = dict(newest)
 
 
 def slice_video_to_windows(video: Path, job: JobRecord) -> list:
@@ -416,6 +540,7 @@ def slice_video_to_windows(video: Path, job: JobRecord) -> list:
         video, frames,
         window_stride_sec=float(dflt.get("window_stride_sec", 4.0)),
         max_frames_per_window=int(ex.get("max_frames_per_window", 4)),
+        window_duration_sec=float(ex.get("window_duration_sec", dflt.get("window_stride_sec", 4.0))),
     )
     job.windows_total = len(windows)
     job.message = f"抽帧完成：{len(frames)} 帧 → {len(windows)} 个窗口"
@@ -575,18 +700,87 @@ class LiveStream:
         self.cap = None
 
 
+def capture_recent_windows(job: JobRecord, reader) -> list:
+    """Select fresh windows from continuous capture, avoiding stale prefetched batches."""
+    import math
+    from civility.extract import Window, sample_evenly
+    live = STATE.cfg.get("live") or {}
+    ex = STATE.cfg.get("extract") or {}
+    stride = float(live.get("window_stride_sec", 2))
+    count = int(live.get("continuous_batch_windows", 2))
+    n_frames = int(live.get("frames_per_window", 4))
+    context = max(0.0, float(live.get("context_sec", 4)))
+    if job.capture_started_at is None:
+        job.capture_started_at = time.time()
+    earliest = (job.last_recent_wall if job.last_recent_wall is not None
+                else job.capture_started_at) + stride * count
+    deadline = time.monotonic() + max(10.0, stride * count + 5)
+    while not job.stop_flag:
+        history = reader.snapshot_history()
+        if history and history[-1][0] >= earliest:
+            if time.time()-history[-1][0] > max(2.0, stride):
+                raise ClusterError("摄像头没有更新画面，正在重新连接")
+            break
+        if reader.dead or time.monotonic() >= deadline:
+            raise ClusterError("摄像头近期画面不足，正在重新连接")
+        time.sleep(0.02)
+    if job.stop_flag:
+        return []
+    latest = history[-1][0]
+    directory = Path(STATE.cfg["paths"]["frames_dir"]) / job.job_id
+    directory.mkdir(parents=True, exist_ok=True)
+    windows = []
+    for index in range(count):
+        end = latest - stride * (count - index - 1)
+        start = end - stride
+        fresh = sample_evenly([(t, data) for t, data in history if start < t <= end], n_frames)
+        prior = sample_evenly([(t, data) for t, data in history if start-context <= t <= start],
+                             math.ceil(context/stride) * n_frames) if context else []
+        selected = sample_evenly(prior+fresh, int(ex.get("max_frames_per_window", 18)))
+        if len(fresh) < 2:
+            raise ClusterError("近期画面缺少连续帧，正在重新连接")
+        source = []
+        for timestamp, data in selected:
+            path = job.recent_frame_files.get(timestamp)
+            if path is None:
+                path = directory / f"f_{job.frame_idx_offset:05d}.jpg"
+                path.write_bytes(data)
+                job.frame_idx_offset += 1
+                job.recent_frame_files[timestamp] = path
+            source.append((timestamp-job.capture_started_at, str(path)))
+        windows.append(Window(window_id=f"{job.job_id}__w{job.window_seq:05d}",
+            video=job.filename,t_start=round(source[0][0],2),t_end=round(source[-1][0],2),
+            frames=[p for _,p in source],labels=[f"t={t:.1f}s" for t,_ in source],
+            idx0=frame_index_of(source[0][1])))
+        job.window_seq += 1
+    job.last_recent_wall = latest
+    cutoff = latest-context-stride*count
+    job.recent_frame_files = {t:p for t,p in job.recent_frame_files.items() if t>=cutoff}
+    job.windows_total = len(windows)
+    job.windows_done = 0
+    job.state = "running"
+    coverage = stride * count
+    job.behind = job.last_batch_sec > coverage * 1.05
+    STATE.log_line(f"[{job.job_id[:8]}] 取最近 {len(windows)} 个窗口，末帧距现场 "
+                   f"{max(0.0,time.time()-latest):.2f}s，采集持续运行")
+    return windows
+
+
 def capture_live_windows(job: JobRecord, spec: str,
                          stream: "LiveStream | None" = None) -> list:
     """从实时源（本地摄像头 / RTSP）采集判断窗口。
 
     与文件的区别：实时流不知道"总共有多少窗口"，所以进度是
-    "已采集 N / 目标 M"，而不是百分比。窗口长度与推理耗时直接相关
-    （见 PHASE1 文档：单窗口推理约 5.5 秒，所以步长不能小于它）。
+    "已采集 N / 目标 M"，而不是百分比。采集批次与推理流水线配合；
+    近期帧跨批次保留，让模型观察动作开始、变化与结果。
 
     stream 不为空时复用同一条已打开的流（持续监测用），
     这样每批只花"采集时间"而不必重复 RTSP 握手。
     """
     from .capture import capture_windows, mask_credentials, parse_source
+    if (job.continuous and job.source_kind != "file" and stream is not None and
+            callable(getattr(stream.reader, "snapshot_history", None))):
+        return capture_recent_windows(job, stream.reader)
 
     try:
         # kind 决定几个分支：文件源取样方式不同、也不能裁剪帧文件
@@ -603,7 +797,7 @@ def capture_live_windows(job: JobRecord, spec: str,
 
     stride = float(live_cfg.get("window_stride_sec",
                                 dflt.get("window_stride_sec", 6.0)))
-    n_frames = int(ex.get("max_frames_per_window", 4))
+    n_frames = int(live_cfg.get("frames_per_window", ex.get("max_frames_per_window", 4)))
     # ⚠️ 持续监测模式**不能**把 max_windows 当成"总共要采多少"。
     #    踩过的坑：这里原本写 continuous_max_windows=100000，
     #    而 capture_windows 的循环条件是"采满 max_windows 才返回"——
@@ -693,20 +887,30 @@ def capture_live_windows(job: JobRecord, spec: str,
         #    文件源仍按"末帧 + interval"（跳帧取样，窗口尾部还有间隔）。
         t_end = (round(wf[-1][0], 2) if kind != "file"
                  else round(wf[-1][0] + stride / max(1, len(wf)), 2))
+        # Include recent source frames so short live windows do not sever an action chain.
+        from civility.extract import sample_evenly
+        context_sec = max(0.0, float(live_cfg.get("context_sec", 0)))
+        if job.context_frames and wf[0][0] <= job.context_frames[-1][0]:
+            job.context_frames = []  # Source loop/reset: never join different timeline passes.
+        context = [f for f in job.context_frames
+                   if wf[0][0] - context_sec <= f[0] < wf[0][0]] if context_sec else []
+        source_frames = sample_evenly(context + wf, int(ex.get("max_frames_per_window", 4)))
+        job.context_frames = [f for f in job.context_frames + wf
+                              if f[0] >= wf[-1][0] - context_sec][-int(ex.get("max_frames_per_window", 4)):]
         windows.append(
             Window(
                 window_id=f"{job.job_id}__w{seq:05d}",
                 video=job.filename,
-                t_start=round(wf[0][0], 2),
+                t_start=round(source_frames[0][0], 2),
                 t_end=t_end,
-                frames=[p for _, p in wf],
-                labels=[f"t={t:.1f}s" for t, _ in wf],
+                frames=[p for _, p in source_frames],
+                labels=[f"t={t:.1f}s" for t, _ in source_frames],
                 # ★ 真实帧号取自文件名（f_00023.jpg → 23），不再靠 t_start 推算。
                 #   踩过的坑：/frames 接口原本算的是 int(t_start)+idx，只在
                 #   "步长 == 帧间隔、且一帧没丢"时才成立；改步长就会指到别的
                 #   帧上，而页面看起来完全正常（静默显示错误的画面）。
                 #   实测：步长 6 秒时老算法取第 6 帧，本窗口第一帧其实是第 3 帧。
-                idx0=frame_index_of(wf[0][1]),
+                idx0=frame_index_of(source_frames[0][1]),
             )
         )
     job.window_seq += len(windows)
@@ -719,11 +923,12 @@ def capture_live_windows(job: JobRecord, spec: str,
     #    说明系统处理不过来，画面会持续滞后。
     if job.continuous and windows:
         need = stride * len(windows)
-        if job.last_batch_sec and job.last_batch_sec > need * 0.8:
+        if job.last_batch_sec and job.last_batch_sec > need * 1.05:
             STATE.log_line(
-                f"[{job.job_id[:8]}] ⚠️ 处理速度跟不上：上一批耗时 "
+                f"[{job.job_id[:8]}] ⚠️ 检测吞吐不足：上一批耗时 "
                 f"{job.last_batch_sec:.1f}s，而 {len(windows)} 个窗口只覆盖 "
-                f"{need:.1f}s。画面会逐渐滞后 —— 建议把窗口步长调大。"
+                f"{need:.1f}s。预览保持实时，检测结果可能晚于现场；"
+                f"最近结果距现场约 {job.result_age_sec:.1f}s。"
             )
             job.behind = True
         else:
@@ -760,10 +965,27 @@ def run_job(job_id: str) -> None:
         LiveStream(job.source_spec, log_prefix=job.job_id[:8])
         if (job.is_live and job.continuous) else None
     )
+    cap_pool = None
+    infer_pool = None
+    next_cap = None
     try:
         sess = STATE.session if not job.use_mock else None
         if not job.use_mock and (sess is None or sess.state != "ready"):
             raise ClusterError("推理服务未就绪，请先在「服务」页启动")
+
+        job._archive_enabled = False
+        job._archive_error = ""
+        job._archived_windows = 0
+        if not job.is_live and job.source_kind == "file":
+            try:
+                job._archive_source = STATE.uploads[job.job_id]
+                library = video_library()
+                if Path(job._archive_source).resolve().is_relative_to(library.uploads_root):
+                    library.begin(job)
+                    job._archive_enabled = True
+            except Exception as exc:
+                job._archive_error = f"视频问答档案未能创建：{type(exc).__name__}: {exc}"
+                STATE.log_line(job._archive_error)
 
         # ── 推理入口：集群 or 本地 mock ──
         def infer(frames_b64: list[str], labels: list[str], w, **kw) -> dict:
@@ -772,9 +994,10 @@ def run_job(job_id: str) -> None:
 
                 req = WindowRequest(
                     window_id=w.window_id, video=job.source_spec or job.filename,
-                    t_start=w.t_start, t_end=w.t_end, frames=[], labels=labels,
+                    t_start=w.t_start, t_end=w.t_end, frames=list(w.frames), labels=labels,
                     with_alert=kw.get("with_alert", False),
                     with_actions=kw.get("with_actions", False),
+                    with_risks=kw.get("with_risks", False),
                 )
                 # 演示场景：让场景描述/动作/判定依据/告警互相自洽（见 MOCK_SCENES）
                 # CIVILITY_MOCK_LATENCY：给本地假模型加人为延迟，**专供诊断**。
@@ -794,20 +1017,11 @@ def run_job(job_id: str) -> None:
                 return {"ok": True, "parsed": parsed, "raw": res.raw,
                         "error": None, "latency_sec": res.latency_sec,
                         "backend": "mock"}
-            return sess.infer(frames_b64, labels, **kw)
+            from civility.config import behavior_payload
+            kw.setdefault("few_shot", bool(STATE.behaviors.defaults.get("few_shot", True)))
+            definitions = kw.pop("behaviors", None)
+            return sess.infer(frames_b64, labels, behaviors=definitions or behavior_payload(STATE.behaviors), **kw)
 
-        agg_cfg = STATE.cfg.get("aggregate") or {}
-        # mode: ai 时要求模型自己判断该不该告警，所以要在请求里带上 with_alert
-        with_alert = str(agg_cfg.get("mode") or "").lower() == "ai"
-        max_tokens = int((STATE.behaviors.defaults or {}).get("max_new_tokens", 260))
-        # 额外的输出字段（alert/alert_reason、people）要留出 token 余量，
-        # 否则 JSON 会被截断 → 解析失败 → 整窗白跑。
-        # ⚠️ 这个下限随"输出瘦身"一起调小过：以前是 512 + extra*256（最高 1280），
-        #    那是按"每个未命中行为也要写 observable"估的。现在未命中不写依据、
-        #    people 用短键，一段完整输出约 150~250 token，所以下限收到
-        #    180 + extra*90（alert+actions 全开时 450）——仍是 2 倍安全余量。
-        extra = (2 if with_alert else 0) + (1 if job.with_actions else 0)
-        max_tokens = max(max_tokens, 180 + extra * 90)
         lat: list[float] = []
         t0 = time.time()
         round_no = 0
@@ -819,11 +1033,13 @@ def run_job(job_id: str) -> None:
         # 动作量门控（见窗口循环里的说明）
         _live = STATE.cfg.get("live") or {}
         motion_gate = bool(_live.get("motion_gate", True))
-        motion_thr = float(_live.get("motion_threshold", 1.5) or 1.5)
-        # 并发提交的窗口数：服务端按"几乎同时到达"凑批，所以本地并发度应当
-        # 不小于服务端的批量上限（VLM_BATCH_MAX，默认 8），否则凑不满、拿不到
-        # 那 4 倍吞吐。线程本身很便宜（都在等 HTTP 响应）。
+        motion_thr = float(_live.get("motion_threshold", 0.5))
+        recheck_sec = max(1.0, float(_live.get("motion_recheck_sec", 30)))
+        # 同批请求并发抵达同一个 GPU worker，避免被轮询拆散成多个单窗任务。
         infer_workers = max(1, int(_live.get("infer_workers", 6) or 6))
+        if not job.use_mock:
+            infer_pool = concurrent.futures.ThreadPoolExecutor(
+                max_workers=infer_workers, thread_name_prefix="infer")
         # 采集与推理流水线：推理这一批的同时，后台线程已经在采下一批。
         # 不做的话一个周期 = 采集 + 推理（串行），做了就是两者取较长者。
         # 步长 2 秒 × 8 窗时：串行 16+14=30s/批，流水线 16s/批 —— 差近两倍。
@@ -833,6 +1049,17 @@ def run_job(job_id: str) -> None:
         next_cap = None
 
         while True:
+            # 每批读取一个一致快照；页面调整策略/复检无需中断持续监测。
+            agg_cfg = dict(STATE.cfg.get("aggregate") or {})
+            with_alert = str(agg_cfg.get("mode") or "").lower() == "ai"
+            with_risks = bool(agg_cfg.get("open_risks", True))
+            batch_behaviors = STATE.behaviors
+            max_tokens = generation_budget(batch_behaviors, with_alert=with_alert,
+                                           with_actions=job.with_actions, with_risks=with_risks)
+            _live = STATE.cfg.get("live") or {}
+            motion_gate = bool(_live.get("motion_gate", True))
+            motion_thr = float(_live.get("motion_threshold", 0.5))
+            recheck_sec = max(1.0, float(_live.get("motion_recheck_sec", 30)))
             round_no += 1
             batch_t0 = time.time()
             if job.is_live:
@@ -882,7 +1109,9 @@ def run_job(job_id: str) -> None:
                 cap_fail = 0
                 video_label = job.filename
                 # 把"下一批的采集"提前扔到后台，与随后的推理重叠执行
-                if cap_pool is not None and not job.stop_flag:
+                if (cap_pool is not None and not job.stop_flag and
+                        not (stream is not None and job.source_kind != "file" and
+                             callable(getattr(stream.reader, "snapshot_history", None)))):
                     next_cap = cap_pool.submit(capture_live_windows, job,
                                                job.source_spec, stream)
             else:
@@ -904,15 +1133,17 @@ def run_job(job_id: str) -> None:
                         w.window_id = f"{w.window_id}__r{round_no:02d}"
 
             job.state = "running"
+            inference_t0 = time.time()
 
             # ── 预提交：把本批能算的窗口**并发**发出去 ──
             # 为什么必须并发（实测结论）：服务端做了动态批量，
             # 但批量只有在"多个请求几乎同时到达"时才会形成 ——
             # 一个一个顺序发的话，服务端永远只收到 1 个请求，批量形同虚设。
-            # 实测批量 8 能把吞吐提到 4 倍（1.96s/窗 → 0.49s/窗），
-            # 代价是单个请求要等同伴凑齐（服务端等待窗口 150ms，可忽略）。
+            # 当前小批量实测：同卡批量 2 比两个 worker 各算 1 窗更快。
+            # 服务端凑批最多等待 25ms，保留全部证据和动作描述。
             skip_flags: list[bool] = []
             motions: list[float] = []
+            gate_last_checked = job.last_model_t_end
             for w in windows:
                 sc = -1.0
                 skip = False
@@ -921,35 +1152,40 @@ def run_job(job_id: str) -> None:
                         from .capture import frame_motion
 
                         sc = frame_motion(list(w.frames))
-                        # 两道保险：只在持续监测里生效；上一窗刚命中违规时不生效
-                        skip = (sc < motion_thr) and not _last_window_had_hit(job)
+                        skip = _should_skip_window(
+                            job, sc, motion_thr, w.t_end, recheck_sec,
+                            gate_last_checked)
                     except Exception as e:              # noqa: BLE001
                         STATE.log_line(f"（动作量计算失败，照常推理：{e}）")
                 motions.append(sc)
                 skip_flags.append(skip)
+                if not skip:
+                    gate_last_checked = w.t_end
 
             inflight: dict[int, object] = {}
             ex = None
+
+            def _infer_window(_w):
+                try:
+                    fb = [b64_of(p) for p in _w.frames]
+                    if job.use_mock:
+                        return infer(fb, _w.labels, _w, max_new_tokens=max_tokens,
+                                     with_alert=with_alert, with_actions=job.with_actions, with_risks=with_risks)
+                    return infer_with_review(
+                        lambda frames, labels, **kw: infer(frames, labels, _w, **kw),
+                        fb, _w.labels, batch_behaviors, max_new_tokens=max_tokens,
+                        with_alert=with_alert, with_actions=job.with_actions, with_risks=with_risks,
+                        review_enabled=bool(batch_behaviors.defaults.get("evidence_review", True)))
+                except Exception as e:
+                    return {"ok": False, "error": f"{type(e).__name__}: {e}", "parsed": None, "latency_sec": 0}
+
             if not job.use_mock:
-                ex = concurrent.futures.ThreadPoolExecutor(
-                    max_workers=infer_workers, thread_name_prefix="infer")
+                ex = infer_pool
                 for i, w in enumerate(windows):
                     if skip_flags[i]:
                         continue
 
-                    def _run(_w=w):
-                        try:
-                            fb = [b64_of(p) for p in _w.frames]
-                            return infer(fb, _w.labels, _w,
-                                         max_new_tokens=max_tokens,
-                                         with_alert=with_alert,
-                                         with_actions=job.with_actions)
-                        except Exception as e:          # noqa: BLE001
-                            return {"ok": False,
-                                    "error": f"{type(e).__name__}: {e}",
-                                    "parsed": None, "latency_sec": 0}
-
-                    inflight[i] = ex.submit(_run)
+                    inflight[i] = ex.submit(_infer_window, w)
                 STATE.log_line(
                     f"[{job.job_id[:8]}] 本批 {len(windows)} 窗："
                     f"跳过 {sum(skip_flags)}、并发提交 {len(inflight)}"
@@ -969,25 +1205,36 @@ def run_job(job_id: str) -> None:
                                   if job.continuous else "…"))
 
                 # ── 动作量门控（判定在预提交时已算好，见上）──
+                # 前一个已送模型的窗口可能刚发现风险/失败；整批预判后还要
+                # 再检查一次，不能用原 skip_flags 抹掉新发现的风险和重试保护。
                 if skip_flags[i]:
-                    prev = job.window_results[-1]
+                    skip_flags[i] = _should_skip_window(
+                        job, motions[i], motion_thr, w.t_end, recheck_sec,
+                        job.last_model_t_end)
+                if skip_flags[i]:
                     score = motions[i]
-                    rec = dict(prev)
-                    rec.update({
+                    rec = {
                         "window_id": w.window_id,
                         "t_start": w.t_start, "t_end": w.t_end,
                         "frames": len(w.frames),
                         # 跳过窗口也有自己的帧（只是没送模型），照样记帧号，
                         # 否则页面缩略图会指着上一窗的帧。
                         "frame0": int(getattr(w, "idx0", -1)),
+                        "frame_indices": w.frame_indices,
+                        "frame_labels": list(w.labels),
                         "latency": 0.0,
                         "skipped": True,
                         "motion": round(score, 2),
-                    })
+                        "people": [], "violations": {}, "risks": [],
+                        "raw": "", "error": None,
+                    }
                     rec["scene"] = (f"[未调模型] 画面无明显变化"
-                                    f"（动作量 {score:.2f} < {motion_thr}）"
-                                    f" ｜ 上一窗：{prev.get('scene','')}")
+                                    f"（动作量 {score:.2f} < {motion_thr}），"
+                                    f"静止画面每 {recheck_sec:g} 秒复检")
                     job.window_results.append(rec)
+                    archive_window(job, rec)
+                    if len(job.window_results) > job.max_kept_windows:
+                        del job.window_results[:-job.max_kept_windows]
                     total_done += 1
                     job.windows_seen = total_done
                     job.windows_done = i + 1
@@ -999,11 +1246,13 @@ def run_job(job_id: str) -> None:
                         "t_start": w.t_start, "t_end": w.t_end,
                         "scene": rec["scene"],
                         "people": rec.get("people") or [],
-                        "hits": [], "error": None, "latency": 0.0,
+                        "hits": [], "risks": [], "error": None, "latency": 0.0,
                         "frame0": rec.get("frame0", -1),
+                        "frame_indices": rec.get("frame_indices", []),
+                        "frame_labels": rec.get("frame_labels", []),
                         "frames": rec.get("frames", 0),
                         "skipped": True, "motion": round(score, 2),
-                        "tokens_prompt": prev.get("tokens_prompt"),
+                        "tokens_prompt": 0,
                         "tokens_out": 0,
                         "progress": round(job.progress, 4),
                     })
@@ -1028,15 +1277,7 @@ def run_job(job_id: str) -> None:
                 if i in inflight:
                     res = inflight.pop(i).result()      # 并发提交过 → 等它
                 else:
-                    try:
-                        frames_b64 = [b64_of(p) for p in w.frames]
-                        res = infer(frames_b64, w.labels, w,
-                                    max_new_tokens=max_tokens,
-                                    with_alert=with_alert,
-                                    with_actions=job.with_actions)
-                    except Exception as e:
-                        res = {"ok": False, "error": f"{type(e).__name__}: {e}",
-                               "parsed": None, "latency_sec": 0}
+                    res = _infer_window(w)
 
 
                 if res.get("latency_sec"):
@@ -1044,6 +1285,35 @@ def run_job(job_id: str) -> None:
                     job.avg_latency = sum(lat) / len(lat)
 
                 parsed = res.get("parsed")
+                if res.get("valid") is False and not res.get("error"):
+                    res["error"] = "模型输出格式校验失败：" + "; ".join(
+                        str(p) for p in (res.get("problems") or [])[:3])
+                if with_risks and isinstance(parsed, dict) and "risks" not in parsed:
+                    res["error"] = ("模型未返回开放风险字段；请确认已部署并重启新模型服务，"
+                                    "或检查原始输出")
+                if parsed is None and not res.get("error"):
+                    res["error"] = "模型未返回可用的结构化结论"
+                if res.get("error"):
+                    parsed = None  # 不把失败输出渲染为正常识别或用于静止门控。
+                elif isinstance(parsed, dict):
+                    # Local ingress must enforce the same evidence gate even for an old worker.
+                    parsed = sanitize(parsed, batch_behaviors, frame_count=len(w.frames))
+                if parsed is not None and not res.get("error"):
+                    job.last_model_t_end = w.t_end
+                if job.is_live and job.source_kind != "file" and job.capture_started_at is not None:
+                    job.result_age_sec = max(0.0, time.time() - job.capture_started_at - w.t_end)
+                evidence_warnings = []
+                for bid, value in (parsed or {}).get("violations", {}).items():
+                    if value.get("evidence_issues"):
+                        behavior = STATE.behaviors.by_id(bid)
+                        evidence_warnings.append({"behavior_id": bid,
+                                                  "name": behavior.name if behavior else bid,
+                                                  "issues": value["evidence_issues"]})
+                for value in (parsed or {}).get("risks", []):
+                    if value.get("evidence_issues"):
+                        evidence_warnings.append({"behavior_id": value["risk_id"],
+                                                  "name": value["name"],
+                                                  "issues": value["evidence_issues"]})
                 rec = {
                     "window_id": w.window_id,
                     "t_start": w.t_start,
@@ -1052,7 +1322,12 @@ def run_job(job_id: str) -> None:
                     # ★ 本窗口第一帧的真实帧号（见 api_frame 的说明）。
                     #   前端缩略图要拿它当缓存破坏参数，也要用它定位"中间帧"。
                     "frame0": int(getattr(w, "idx0", -1)),
+                    "frame_indices": w.frame_indices,
+                    "frame_labels": list(w.labels),
                     "latency": res.get("latency_sec"),
+                    "roundtrip_sec": res.get("roundtrip_sec"),
+                    "timing": res.get("timing"),
+                    "result_age_sec": round(job.result_age_sec, 2) if job.is_live else None,
                     # 这三个数用来判断延迟花在哪：prompt token 多 → 视觉编码是瓶颈
                     # （降帧数/降分辨率有效）；输出 token 多 → 生成是瓶颈
                     # （精简输出格式或减行为数有效）。见 tools/bench_latency.py
@@ -1067,9 +1342,14 @@ def run_job(job_id: str) -> None:
                     # 画面里每个人在做什么（监测模式的核心内容）
                     "people": (parsed or {}).get("people", []),
                     "violations": (parsed or {}).get("violations", {}),
-                    "raw": (res.get("raw") or "")[:2000],
+                    "risks": (parsed or {}).get("risks", []) if with_risks else [],
+                    "evidence_warnings": evidence_warnings,
+                    "raw": (res.get("raw") or "")[:8000],
+                    "verification": res.get("verification"),
+                    "generation_retry": res.get("generation_retry"),
                 }
                 job.window_results.append(rec)
+                archive_window(job, rec)
                 job.windows_done = i + 1
                 total_done += 1
                 job.windows_seen = total_done
@@ -1109,10 +1389,18 @@ def run_job(job_id: str) -> None:
                     "scene": rec["scene"],
                     "people": rec["people"],
                     "hits": hits,
+                    "risks": rec["risks"],
+                    "evidence_warnings": rec["evidence_warnings"],
+                    "verification": rec.get("verification"),
                     "error": rec["error"],
                     "latency": rec["latency"],
+                    "roundtrip_sec": rec.get("roundtrip_sec"),
+                    "timing": rec.get("timing"),
+                    "result_age_sec": rec.get("result_age_sec"),
                     # ★ 帧号：前端缩略图用它①做缓存破坏 ②定位"中间帧"
                     "frame0": rec.get("frame0", -1),
+                    "frame_indices": rec.get("frame_indices", []),
+                    "frame_labels": rec.get("frame_labels", []),
                     "frames": rec.get("frames", 0),
                     # ★ 延迟分解：让"时间花在哪"看得见。
                     #   tokens_out 是决定延迟的那个数（实测 35.8 tok/s ≈
@@ -1180,7 +1468,16 @@ def run_job(job_id: str) -> None:
                     f"[{job.job_id[:8]}] 第 {round_no} 批完成，累计 {total_done} 窗口 / "
                     f"{len(job.alerts)} 条告警 / {time.time() - t0:.0f}s，继续监测…"
                 )
-                job.last_batch_sec = time.time() - batch_t0
+                recent_source = (stream is not None and job.source_kind != "file" and
+                                 callable(getattr(stream.reader, "snapshot_history", None)))
+                job.last_batch_sec = time.time() - (inference_t0 if recent_source else batch_t0)
+                if recent_source:
+                    coverage = len(windows) * float(_live.get("window_stride_sec", 2))
+                    job.behind = job.last_batch_sec > coverage * 1.05
+                    if job.behind:
+                        STATE.log_line(f"[{job.job_id[:8]}] 检测本批用时 {job.last_batch_sec:.1f}s / "
+                            f"覆盖 {coverage:.1f}s，最新判定画面距现场约 {job.result_age_sec:.1f}s；"
+                            "下一批直接取近期画面，预览持续刷新")
                 continue
 
             # ★ 非持续任务的出口（这里以前什么都没有 —— 是一个真 bug）。
@@ -1247,6 +1544,13 @@ def run_job(job_id: str) -> None:
         print(traceback.format_exc(), flush=True)
 
     finally:
+        if getattr(job, "_archive_enabled", False):
+            try:
+                video_library().save(job)
+            except Exception as exc:
+                STATE.log_line(f"视频问答档案保存失败：{type(exc).__name__}: {exc}")
+        if infer_pool is not None:
+            infer_pool.shutdown(wait=False, cancel_futures=True)
         # 任务结束/停止/出错都要把复用的实时流还回去，
         # 否则 RTSP 会话会一直挂在摄像头上（很多设备并发数有限）。
         if next_cap is not None:
@@ -1268,12 +1572,127 @@ def create_app():
     def index():
         return (HERE / "static" / "index.html").read_text(encoding="utf-8")
 
+    @app.get("/static/alert_speech.js")
+    def speech_script():
+        return FileResponse(str(HERE / "static" / "alert_speech.js"), media_type="text/javascript")
+
+    # ── 已分析视频与可验证的视觉问答 ──
+    def archived_video(video_id: str) -> tuple[VideoLibrary, dict]:
+        library = video_library()
+        job = STATE.jobs.get(video_id)
+        if job is not None and (job.state in ("queued", "extracting", "running", "capturing")
+                                or (getattr(job, "_detect_worker", None) is not None and job._detect_worker.is_alive())):
+            raise HTTPException(409, "视频仍在分析，请等本轮结束后提问")
+        try:
+            metadata = library.load(video_id)
+            if metadata.get("state") not in ("done", "stopped", "error"):
+                raise HTTPException(409, "该视频没有已结束的分析记录")
+            return library, metadata
+        except (OSError, ValueError):
+            # Materialize analyses completed before this feature was loaded.
+            if job is None or job.is_live or not job.window_results:
+                raise HTTPException(404, "未找到已分析视频，请先上传并分析")
+            try:
+                job._archive_source = STATE.uploads.get(video_id)
+                library.begin(job)
+                if job.windows_seen > len(job.window_results):
+                    job._archive_error = "这是功能升级前的分析，仅能恢复页面仍保留的窗口；更早记录未保存，请重新分析以获得完整档案"
+                for row in job.window_results:
+                    library.record(job, row)
+                library.save(job)
+                return library, library.load(video_id)
+            except (OSError, ValueError) as exc:
+                raise HTTPException(404, "分析记录无法读取") from exc
+
+    @app.get("/api/videos")
+    def api_videos():
+        for job in list(STATE.jobs.copy().values()):
+            if not job.is_live and job.window_results and job.state in ("done", "stopped", "error"):
+                try:
+                    archived_video(job.job_id)
+                except HTTPException:
+                    pass
+        return {"videos": video_library().list()}
+
+    @app.get("/api/videos/{video_id}")
+    def api_video(video_id: str):
+        library, metadata = archived_video(video_id)
+        return library.public(metadata)
+
+    @app.get("/api/videos/{video_id}/source")
+    def api_video_source(video_id: str):
+        library, metadata = archived_video(video_id)
+        path = library.source(metadata)
+        if path is None:
+            raise HTTPException(404, "原视频已清理或不可用")
+        return FileResponse(str(path))
+
+    @app.get("/api/videos/{video_id}/frames/{frame_id}")
+    def api_video_frame(video_id: str, frame_id: str, revision: str = ""):
+        library, metadata = archived_video(video_id)
+        if revision and revision != metadata.get("analysis_revision"):
+            raise HTTPException(409, "视频已重新分析，请重新提问以更新证据")
+        try:
+            path, _ = library.frame(video_id, frame_id)
+            return FileResponse(str(path), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise HTTPException(404, "证据帧不可用：" + str(exc)) from exc
+
+    @app.post("/api/videos/{video_id}/ask")
+    def api_video_ask(video_id: str, body: dict):
+        ensure_current_runtime()
+        question = body.get("question")
+        if not isinstance(question, str) or not question.strip() or len(question) > 2000:
+            raise HTTPException(400, "请输入 1 至 2000 字的问题")
+        sess = STATE.session
+        if sess is None or sess.state != "ready":
+            raise HTTPException(503, "请先启动推理服务；视频问答使用部署的大模型")
+        if not QA_BUSY.acquire(blocking=False):
+            raise HTTPException(429, "已有视频问答正在处理，请等回答完成后再提问")
+        try:
+            library, metadata = archived_video(video_id)
+            evidence, context, missing = library.retrieve(video_id, question.strip())
+            if metadata.get("use_mock"):
+                context = "历史检测为模拟数据，不是事实；只以本次真实画面为准。\n" + context
+            prompt_evidence = [{k: v for k, v in e.items() if k not in ("path", "recovered")} for e in evidence]
+            result = sess.ask_video([b64_of(e["path"]) for e in evidence], question.strip(), prompt_evidence, context)
+            from civility.video_qa import validate_answer
+            answer = validate_answer(result.get("parsed"), prompt_evidence)
+            _, latest = archived_video(video_id)
+            if latest.get("analysis_revision") != metadata.get("analysis_revision"):
+                raise HTTPException(409, "提问期间视频已重新分析，请重新提问")
+            by_id = {e["frame_id"]: e for e in evidence}
+            refs = []
+            for citation in answer["citations"]:
+                e = by_id[citation["frame_id"]]
+                refs.append({**{k: v for k, v in e.items() if k != "path"}, **citation,
+                             "image_url": f'/api/videos/{video_id}/frames/{e["frame_id"]}?revision={metadata["analysis_revision"]}'})
+            STATE.last_interact = time.time()
+            return {**answer, "citations": refs, "video_id": video_id, "question": question.strip(),
+                    "model": result.get("model", sess.model), "basis": "deployed_vlm_visual_qa",
+                    "sampled_frames": len(evidence), "total_windows": metadata.get("archived_windows", metadata.get("windows_seen", 0)),
+                    "roundtrip_sec": result.get("roundtrip_sec"),
+                    "warnings": missing + ([metadata["archive_error"]] if metadata.get("archive_error") else [])}
+        except HTTPException:
+            raise
+        except (ValueError, FileNotFoundError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except ClusterError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(422, "读取视频证据失败：" + str(exc)) from exc
+        finally:
+            QA_BUSY.release()
+
     # ── 系统 ──
     @app.get("/api/state")
     def api_state():
         s = STATE.session.status() if STATE.session else {"state": "idle"}
         return {
             "backend": "cluster",
+            "runtime": runtime_status(),
             "service": s,
             "jobs": [j.summary() for j in sorted(STATE.jobs.values(),
                                                  key=lambda x: -x.created)],
@@ -1326,48 +1745,72 @@ def create_app():
     # ── 常驻服务 ──
     @app.post("/api/service/start")
     def api_service_start(body: dict | None = None):
-        if STATE.session and STATE.session.state in ("ready", "running", "pending", "submitting"):
-            raise HTTPException(400, "服务已在启动或运行中，请先停止")
-        cl_cfg = STATE.cfg.get("cluster") or {}
-        model = (body or {}).get("model") or cl_cfg.get(
-            "remote_model", "Qwen/Qwen3-VL-4B-Instruct"
-        )
-        cl = STATE.client()
-        # 检查作业包是否存在。它在 results_dir/cluster/pkg 下，
-        # 由 `civility.cli cluster-prepare` 生成 —— 所以要提示的是那两个命令。
-        #
-        # ⚠️ 这里原本写成一个恒真的条件（对 data_dir 做了无意义的真值判断），
-        #    导致即使作业包不存在也放行，用户会看到"提交成功"然后作业秒失败。
-        #    实测清空 runs/ 目录后（里面就有 cluster/pkg）就踩到了这个坑。
-        pkg_dir = Path(STATE.cfg["paths"]["results_dir"]) / "cluster" / "pkg"
-        if not (pkg_dir / "behaviors.json").exists():
-            raise HTTPException(
-                400,
-                f"集群作业包不存在（{pkg_dir}）。请先在本机执行：\n"
-                "    python -m civility.cli cluster-prepare\n"
-                "    python -m civility.cli cluster-upload",
+        ensure_current_runtime()
+        with STATE.lock:
+            previous = STATE.session
+            previous_worker = getattr(previous, "_start_worker", None)
+            if previous and (previous.state in ("ready", "running", "pending", "submitting", "stopping")
+                             or (previous_worker is not None and previous_worker.is_alive())):
+                raise HTTPException(400, "服务已在启动或运行中，请先停止")
+            cl_cfg = STATE.cfg.get("cluster") or {}
+            model = (body or {}).get("model") or cl_cfg.get(
+                "remote_model", "Qwen/Qwen3-VL-4B-Instruct"
             )
-        sess = ServiceSession(
-            cl, model=model,
-            port=int((STATE.cfg.get("cluster") or {}).get("service_port", 18080)),
-            exclude=cl_cfg.get("exclude_nodes", "gpu8002,gpu8003,gpu8012"),
-        )
-        STATE.session = sess
+            cl = STATE.client()
+            sess = ServiceSession(
+                cl, model=model,
+                port=int((STATE.cfg.get("cluster") or {}).get("service_port", 18080)),
+                exclude=cl_cfg.get("exclude_nodes", "gpu8002,gpu8003,gpu8012"),
+                extra_sbatch=f"--time={cl_cfg.get('time_limit', '0-03:00:00')}",
+            )
+            # Reserve before dispatch: concurrent requests must see a startup,
+            # rather than a still-idle session that can be replaced.
+            sess.state = "submitting"
+            STATE.session = sess
 
         def worker():
             try:
+                from .cluster_client import deploy_service_package
+                from civility.config import behavior_payload
+                sess._raise_if_cancelled()
+                sess.message = "同步当前推理代码与行为定义…"
+                deploy_service_package(cl, Path(__file__).resolve().parents[1],
+                                       behavior_payload(STATE.behaviors))
                 sess.start(progress=lambda m: STATE.log_line(f"[服务] {m}"))
+            except ServiceSession.StartCancelled:
+                STATE.log_line("[服务] 启动已取消")
             except Exception as e:
+                was_cancelled = sess.cancelled
+                if sess.jobid or was_cancelled:
+                    try:
+                        sess.stop(sweep_orphans=not was_cancelled)
+                    except Exception as cleanup_error:
+                        # Keep the job id and failure visible when cancellation
+                        # could not actually release the allocated resources.
+                        e = ClusterError(f"{e}；释放计算节点失败：{cleanup_error}")
+                        was_cancelled = False
+                if was_cancelled:
+                    STATE.log_line("[服务] 启动已取消")
+                    return
                 sess.state = "error"
                 sess.message = f"{type(e).__name__}: {e}"
                 STATE.log_line(f"[服务] ❌ {sess.message}")
 
-        threading.Thread(target=worker, daemon=True).start()
+        thread = threading.Thread(target=worker, daemon=True)
+        sess._start_worker = thread
+        try:
+            thread.start()
+        except Exception as e:
+            sess.state = "error"
+            sess.message = f"{type(e).__name__}: {e}"
+            raise HTTPException(500, sess.message) from e
         return {"ok": True, "message": "已提交，正在启动（排队 + 加载模型可能要几分钟）"}
 
     @app.post("/api/service/stop")
     def api_service_stop():
-        if not STATE.session:
+        with STATE.lock:
+            session = STATE.session
+        if not session:
             # 没有会话也要扫一遍：网页重启过的话，旧作业会变成孤儿还在计费
             try:
                 cl = STATE.client()
@@ -1380,9 +1823,9 @@ def create_app():
             except Exception as e:
                 STATE.log_line(f"[服务] 遗留作业清理失败：{e}")
             return {"ok": True, "message": "没有在运行的服务"}
-        cancelled = STATE.session.stop()
+        cancelled = session.stop()
         STATE.log_line(f"[服务] 已停止，取消作业 {cancelled}")
-        return {"ok": True, "message": STATE.session.message}
+        return {"ok": True, "message": session.message}
 
     @app.get("/api/service/health")
     def api_service_health():
@@ -1465,22 +1908,35 @@ def create_app():
         但 ai 模式会在 Prompt 里多要两个字段，所以要等下一次推理才生效。
         """
         body = body or {}
-        agg = STATE.cfg.setdefault("aggregate", {})
+        agg = dict(STATE.cfg.get("aggregate") or {})
         if body.get("mode") is not None:
             mode = str(body["mode"]).lower()
             if mode not in ("immediate", "ai", "smoothed"):
                 raise HTTPException(400, "mode 必须是 immediate / ai / smoothed 之一")
             agg["mode"] = mode
         if body.get("dedup_sec") is not None:
-            v = float(body["dedup_sec"])
-            if v < 0:
-                raise HTTPException(400, "dedup_sec 不能为负")
+            try:
+                v = float(body["dedup_sec"])
+            except (TypeError, ValueError):
+                raise HTTPException(400, "dedup_sec 必须是有限数字")
+            if not math.isfinite(v) or v < 0:
+                raise HTTPException(400, "dedup_sec 必须是非负有限数字")
             agg["dedup_sec"] = v
         if body.get("min_confidence") is not None:
-            v = float(body["min_confidence"])
+            try:
+                v = float(body["min_confidence"])
+            except (TypeError, ValueError):
+                raise HTTPException(400, "min_confidence 需在 0-1 之间")
             if not (0 <= v <= 1):
                 raise HTTPException(400, "min_confidence 需在 0-1 之间")
             agg["min_confidence"] = v
+        if "open_risks" in body:
+            if not isinstance(body["open_risks"], bool):
+                raise HTTPException(400, "open_risks 必须为 true 或 false")
+            agg["open_risks"] = body["open_risks"]
+        if not agg.get("open_risks", True) and not STATE.behaviors.enabled:
+            raise HTTPException(400, "请至少启用一条行为定义，或保持 AI 开放风险开启")
+        STATE.cfg["aggregate"] = agg
 
         # 记住上次的配置，重跑时才能正确评估（否则改了模式但用旧结果评分会误导）
         STATE.log_line(f"[告警] 策略更新 → {agg}")
@@ -1492,8 +1948,10 @@ def create_app():
         # 预览必须和实际发给模型的 Prompt 一致 —— 包括 ai 模式下多出来的
         # 告警判定段落。否则用户在这里看不出模型被要求了什么。
         mode = str((STATE.cfg.get("aggregate") or {}).get("mode") or "").lower()
-        return {"prompt": build_system_prompt(STATE.behaviors, with_alert=(mode == "ai")),
-                "mode": mode}
+        open_risks = bool((STATE.cfg.get("aggregate") or {}).get("open_risks", True))
+        return {"prompt": build_system_prompt(STATE.behaviors, with_alert=(mode == "ai"),
+                                               with_risks=open_risks),
+                "mode": mode, "open_risks": open_risks}
 
     @app.get("/api/behaviors/raw")
     def api_behaviors_raw():
@@ -1518,9 +1976,11 @@ def create_app():
             parsed = yaml.safe_load(text)
             if not isinstance(parsed, dict) or "behaviors" not in parsed:
                 raise ValueError("YAML 顶层必须有 behaviors 列表")
+            from civility.config import parse_behaviors
+            parse_behaviors(parsed)  # Reject malformed evidence rules before writing the user's file.
             enabled = [b for b in parsed["behaviors"]
                        if b.get("enabled", True) and b.get("definition")]
-            if not enabled:
+            if not enabled and not (STATE.cfg.get("aggregate") or {}).get("open_risks", True):
                 raise ValueError("至少要有一条 enabled: true 且填了 definition 的行为")
         except Exception as e:
             raise HTTPException(400, f"校验失败，未保存：{e}")
@@ -1531,14 +1991,8 @@ def create_app():
         STATE.reload_behaviors()
         STATE.log_line(f"[行为] 已保存并重载（启用 {len(STATE.behaviors.enabled)} 项）")
 
-        # 热推给计算节点上的常驻服务，无需重启作业
-        pushed = False
-        if STATE.session and STATE.session.state == "ready":
-            try:
-                STATE.session.reload_behaviors(f"{STATE.session.client.workdir}/pkg/behaviors.json")
-                pushed = True
-            except Exception as e:
-                STATE.log_line(f"[行为] 推送到集群失败（不影响本机）：{e}")
+        # Every new request carries its current definition to whichever worker handles it.
+        pushed = bool(STATE.session and STATE.session.state == "ready")
         return {"ok": True, "enabled": len(STATE.behaviors.enabled), "pushed": pushed}
 
     # ── 上传视频 ──
@@ -1571,37 +2025,71 @@ def create_app():
             loop        循环播放：跑完一遍从头再来（默认 False = 跑一遍就结束）
         """
         body = body or {}
-        job = STATE.jobs.get(job_id)
-        if not job:
-            raise HTTPException(404, "任务不存在")
-        # 演示模式不需要集群 —— 否则"没有 VPN 就完全没法验证"这件事仍然成立
-        job.use_mock = bool(body.get("use_mock", job.use_mock))
-        if "mock_scene" in body:
-            job.mock_scene = str(body.get("mock_scene") or "")
-        job.loop = bool(body.get("loop", job.loop))
-        if not job.use_mock and (not STATE.session
-                                 or STATE.session.state != "ready"):
-            raise HTTPException(400, "推理服务未就绪。可先点「启动服务」，"
-                                     "或勾选「演示模式」在本地跑通链路")
-        if job.state in ("running", "extracting"):
-            raise HTTPException(400, "该任务已在运行")
-        if job.state in ("done", "error", "stopped"):
-            # 允许重跑：清掉旧结果，但保留同一个 job_id 方便前端复用
-            job.window_results.clear()
-            job.alerts.clear()
+        ensure_current_runtime()
+        with STATE.lock:
+            job = STATE.jobs.get(job_id)
+            if not job:
+                raise HTTPException(404, "任务不存在")
+            previous_worker = getattr(job, "_detect_worker", None)
+            # An uploaded file is initially queued without a worker. Reserve the
+            # first start atomically so a second request cannot launch another.
+            if (job.state in ("running", "extracting", "capturing")
+                    or (job.state == "queued" and getattr(job, "_detect_start_reserved", False))
+                    or (previous_worker is not None and previous_worker.is_alive())):
+                raise HTTPException(400, "该任务已在运行")
+            use_mock = bool(body.get("use_mock", job.use_mock))
+            if not use_mock and (not STATE.session or STATE.session.state != "ready"):
+                raise HTTPException(400, "推理服务未就绪。可先点「启动服务」，"
+                                         "或勾选「演示模式」在本地跑通链路")
+            # Rejected starts must not alter the current backend or loop mode.
+            job.use_mock = use_mock
+            job.with_actions = bool(body.get("with_actions", True))
+            if "mock_scene" in body:
+                job.mock_scene = str(body.get("mock_scene") or "")
+            job.loop = bool(body.get("loop", job.loop))
+            if job.state in ("done", "error", "stopped"):
+                # 允许重跑：清掉旧结果，但保留同一个 job_id 方便前端复用
+                job.window_results.clear()
+                job.alerts.clear()
             job.progress = 0.0
-        # ★ 重跑必须把累计量一起归零，否则窗口 ID 会从上一轮的序号继续，
-        #   而帧文件名、时间偏移也会跟着串（实测重跑后 ID 混乱）
-        job.cached_windows = None
-        job.window_seq = 0
-        job.frame_idx_offset = 0
-        job.capture_started_at = None
-        job.windows_seen = 0
-        job.t_offset = 0.0
-        job.behind = False
-        job.stop_flag = False
-        job.state = "queued"
-        threading.Thread(target=run_job, args=(job_id,), daemon=True).start()
+            job.error = ""
+            job.message = ""
+            job.avg_latency = 0.0
+            job.windows_done = 0
+            job.windows_total = 0
+            # Old terminal SSE events must not close the new run's connection.
+            # Keep the queue: a client may subscribe before starting detection.
+            while True:
+                try:
+                    job.events.get_nowait()
+                except queue.Empty:
+                    break
+            # ★ 重跑必须把累计量一起归零，否则窗口 ID 会从上一轮的序号继续，
+            #   而帧文件名、时间偏移也会跟着串（实测重跑后 ID 混乱）
+            job.cached_windows = None
+            job.window_seq = 0
+            job.frame_idx_offset = 0
+            job.capture_started_at = None
+            job.windows_seen = 0
+            job.last_model_t_end = None
+            job.alert_checked_until = -1.0
+            job.alert_last_by_type.clear()
+            job.t_offset = 0.0
+            job.behind = False
+            job.stop_flag = False
+            job.state = "queued"
+            job._detect_start_reserved = True
+            worker = threading.Thread(target=run_job, args=(job_id,), daemon=True)
+            job._detect_worker = worker
+        try:
+            worker.start()
+        except Exception as exc:
+            with STATE.lock:
+                job._detect_start_reserved = False
+                job.state = "error"
+                job.error = f"启动检测失败：{type(exc).__name__}: {exc}"
+                job.message = job.error
+            raise HTTPException(500, job.error) from exc
         return {"ok": True, "message": "已开始检测"}
 
     @app.post("/api/stop/{job_id}")
@@ -1639,7 +2127,8 @@ def create_app():
                         break
                     continue
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
-                if ev.get("type") in ("done", "error"):
+                if ev.get("type") == "done" or (ev.get("type") == "error"
+                                                and not ev.get("recovering")):
                     break
 
         return StreamingResponse(
@@ -1666,10 +2155,13 @@ def create_app():
           不必每换一档就改 YAML 重启（重启要等约 2 分钟模型加载）。
         """
         body = body or {}
-        live = STATE.cfg.setdefault("live", {})
+        live = dict(STATE.cfg.get("live") or {})
         if body.get("window_stride_sec") is not None:
-            v = float(body["window_stride_sec"])
-            if v < 1:
+            try:
+                v = float(body["window_stride_sec"])
+            except (TypeError, ValueError):
+                raise HTTPException(400, "窗口步长必须是有限数字")
+            if not math.isfinite(v) or v < 1:
                 raise HTTPException(400, "窗口步长至少 1 秒")
             live["window_stride_sec"] = v
         if body.get("max_windows") is not None:
@@ -1684,6 +2176,15 @@ def create_app():
             if not (1 <= n <= 16):
                 raise HTTPException(400, "攒批窗口数需在 1-16 之间")
             live["continuous_batch_windows"] = n
+        if "motion_recheck_sec" in body:
+            try:
+                v = float(body["motion_recheck_sec"])
+            except (TypeError, ValueError):
+                raise HTTPException(400, "静止复检间隔需在 1-300 秒之间")
+            if not math.isfinite(v) or not 1 <= v <= 300:
+                raise HTTPException(400, "静止复检间隔需在 1-300 秒之间")
+            live["motion_recheck_sec"] = v
+        STATE.cfg["live"] = live
         STATE.log_line(f"[实时] 参数更新 {live}")
         return {"ok": True, "live": live}
 
@@ -1762,6 +2263,7 @@ def create_app():
         并要求模型描述画面里每个人在做什么（对应「摄像头监测」页）。
         """
         body = body or {}
+        ensure_current_runtime()
         spec = (body.get("source") or "").strip()
         if not spec:
             raise HTTPException(400, "请填写视频源")
@@ -1844,7 +2346,17 @@ def create_app():
         files = sorted(d.glob("f_*.jpg"))
         if not files:
             raise HTTPException(404, "帧目录为空")
-        base = int(rec.get("frame0") or -1)
+        base = int(rec.get("frame0", -1))
+        if idx < 0 or idx >= int(rec.get("frames", 1)):
+            raise HTTPException(404, "窗口内帧序号越界")
+        if base >= 0:
+            # 全局帧号不是裁剪后文件列表的下标；旧帧删掉后仍要定位同一张图。
+            indices = rec.get("frame_indices")
+            wanted = indices[idx] if isinstance(indices, list) and len(indices) > idx else base + idx
+            target = next((p for p in files if frame_index_of(p) == wanted), None)
+            if target is None:
+                raise HTTPException(404, "该帧已清理或不存在")
+            return FileResponse(str(target), media_type="image/jpeg")
         if base < 0:
             # 回退旧算法：只为兼容"改动前就已经记下的窗口记录"。
             # 新记录都会带 frame0，所以这条路径在正常使用中不会走到。
@@ -1991,14 +2503,7 @@ def start_watchdog() -> None:
 
 
 def find_free_port(preferred: int, tries: int = 20) -> int:
-    """找一个可用端口：优先用 preferred，被占就往后顺延。
-
-    为什么要自动顺延而不直接报错（踩过）：
-        残留的旧进程占着端口时，新进程以 EADDRINUSE 直接退出，
-        **而旧进程仍在响应请求** —— 于是你对着旧代码反复排查新 bug，
-        改了源码却"毫无效果"。实测在这上面浪费了大量时间。
-        自动换端口 + 把实际端口写进文件，能让这种情况自证清楚。
-    """
+    """探测可用端口；默认启动拒绝占用，仅显式允许时才顺延。"""
     import socket
 
     for p in range(preferred, preferred + tries):
@@ -2019,19 +2524,29 @@ def main() -> int:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8848)
     ap.add_argument("--no-auto-port", action="store_true",
-                    help="端口被占时直接失败，不自动换端口")
+                    help="兼容旧脚本；默认已不自动换端口")
+    ap.add_argument("--allow-another-port", action="store_true",
+                    help="明确允许同时启动另一实例并换端口；仍须访问新地址")
     ap.add_argument("--reload", action="store_true")
     args = ap.parse_args()
+    # Check before cleaning frame history or starting another cost watchdog.
+    try:
+        port = find_free_port(args.port, tries=20 if args.allow_another_port and not args.no_auto_port else 1)
+    except RuntimeError:
+        STATE.log_line(f"端口 {args.port} 已被旧服务占用。本次未启动。")
+        STATE.log_line("请回到原启动终端按 Ctrl+C，停止旧服务后重新执行启动命令。")
+        STATE.log_line("仅在新终端重复启动不会更新旧进程，浏览器仍会连接旧规则。")
+        return 2
+    if port != args.port:
+        STATE.log_line(f"已按明确指定另开服务：http://{args.host}:{port}，请访问这个新地址。")
 
-    # 启动时体检：作业包在不在，直接影响能否启动服务
-    pkg = Path(STATE.cfg["paths"]["results_dir"]) / "cluster" / "pkg"
+    # Model startup uploads the current code; no prebuilt package is required.
     STATE.log_line("═" * 56)
     STATE.log_line("不文明行为识别 · 本地控制台")
     STATE.log_line(f"行为定义：{STATE.cfg['paths']['behaviors']}")
     STATE.log_line(f"启用行为：{[b.id for b in STATE.behaviors.enabled]}")
     STATE.log_line(f"告警策略：{(STATE.cfg.get('aggregate') or {}).get('mode')}")
-    ok_pkg = (pkg / "behaviors.json").exists()
-    STATE.log_line(f"集群作业包：{'✅ 已就绪' if ok_pkg else '❌ 缺失，需先 cluster-prepare + cluster-upload'}")
+    STATE.log_line("集群代码与行为定义：启动模型时自动上传当前版本")
 
     # 启动时把"进程权限"和"摄像头能不能用"打出来。
     # ⚠️ 这条日志很重要：受限令牌（沙箱）下摄像头会静默枚举不到，
@@ -2078,23 +2593,6 @@ def main() -> int:
                 )
     except Exception as e:                      # 清理失败不能影响启动
         STATE.log_line(f"（旧帧清理跳过：{type(e).__name__}: {e}）")
-
-    port = args.port
-    if not args.no_auto_port:
-        port = find_free_port(args.port)
-        if port != args.port:
-            # ⚠️ 这里必须把话说透：本环境里 taskkill 可能报"拒绝访问"，
-            #    而浏览器地址栏默认还是老端口 —— 用户会对着**旧代码**排查半天
-            #    （实测就这样浪费了很久：改了 5 处 bug，页面行为一点没变）。
-            STATE.log_line(f"⚠️ 端口 {args.port} 被占用（多半是残留的旧进程，"
-                           f"它跑的还是旧代码）")
-            STATE.log_line(f"   → 本次已改用 {port}")
-            owner = _port_owner(args.port)
-            if owner:
-                STATE.log_line(f"   → 占用者 PID={owner}，"
-                               f"建议先停掉它：Stop-Process -Id {owner} -Force")
-            STATE.log_line(f"   → 或者直接访问 http://{args.host}:{port}"
-                           f"（请确认地址栏端口，别对着旧实例排查）")
 
     # 把实际端口写进文件：脚本、浏览器、其他工具都靠它找服务，
     # 免得出现"我明明启动了，怎么访问不到"。

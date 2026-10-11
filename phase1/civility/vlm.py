@@ -40,6 +40,8 @@ class WindowRequest:
     with_alert: bool = False
     # 是否要求模型描述画面里每个人在做什么（对应网页的「摄像头监测」页）
     with_actions: bool = False
+    # 开放风险识别：由 AI 主动发现配置之外的现场风险。
+    with_risks: bool = False
 
 
 @dataclass
@@ -161,8 +163,8 @@ MOCK_SCENES: dict[str, dict] = {
              "action": "把手中纸杯朝桶口方向抛出，纸杯落在垃圾桶外侧地面，随后转身离开",
              "changed": "由站立转为抛掷动作，抛掷后转身向画面右侧离开"}
         ],
-        "observable": ("前后帧对比可见：人物手中纸杯在抛掷动作后消失，"
-                       "地面垃圾桶外侧多出一个纸杯，人物未捡起即离开"),
+        "observable": ("连续帧可见同一纸杯由手中脱离、向下落至桶外地面，"
+                       "后续帧纸杯仍留地面，人物离开"),
     },
     "smoking": {
         "label": "吸烟",
@@ -170,10 +172,10 @@ MOCK_SCENES: dict[str, dict] = {
         "violation": "smoking",
         "people": [
             {"where": "画面左侧近处", "appearance": "蓝色工装、戴安全帽",
-             "action": "右手抬至嘴边并停留，随后有明显烟雾呼出",
+             "action": "手持可辨认的烟支送至嘴边吸入，随后有明显烟雾呼出",
              "changed": "右手由身侧抬至嘴边，口鼻前出现扩散的烟雾"}
         ],
-        "observable": "手部在嘴边停留数秒，口鼻前有白色烟雾扩散，符合吸烟动作",
+        "observable": "可辨认的烟支送至嘴唇并吸入，随后口鼻前有烟雾扩散",
     },
     "queue_jumping": {
         "label": "插队",
@@ -269,12 +271,26 @@ class MockBackend:
             truth = {script["violation"]} if script.get("violation") else set()
         else:
             truth = self._truth(req, bs)
+            if req.with_risks and "fall_pos" in Path(req.video).stem.lower():
+                truth = set()  # 开放风险演示不应同时虚构一个配置行为违规
 
+        # 无图请求只用于离线 mock 契约测试，显式按四帧虚构剧本演示。
+        # 一旦带了真实帧列表，就必须尊重其长度，不能制造越界证据。
+        evidence_frame_count = len(req.frames) if req.frames else 4
         violations = []
         for b in bs.enabled:
             hit = b.id in truth
             if rng.random() < self.noise:
                 hit = not hit  # 注入误报 / 漏报
+            if b.evidence_sequence and evidence_frame_count < 2:
+                hit = False
+            evidence = {}
+            if hit:
+                evidence = {key: 1 for key in b.evidence_checks}
+                for index, key in enumerate(b.evidence_sequence):
+                    # 相邻步骤允许共用同帧，但首尾必须跨帧且整体不能倒序。
+                    evidence[key] = 1 + index * (evidence_frame_count - 1) // (
+                        len(b.evidence_sequence) - 1)
             conf = round(rng.uniform(0.55, 0.95) if hit else rng.uniform(0.0, 0.3), 2)
             # 剧本模式下 observable 用剧本里那段"看得见的事实"，
             # 这样页面上的"判定依据"和场景描述是对得上的
@@ -287,6 +303,7 @@ class MockBackend:
                     "violation": hit,
                     "confidence": conf,
                     "observable": obs,
+                    "evidence": evidence,
                     "person_desc": (script["people"][0]["appearance"]
                                     if (script and hit and script.get("people"))
                                     else ("mock 人物" if hit else "")),
@@ -308,6 +325,15 @@ class MockBackend:
         obj = {"scene": (f"[演示] {script['scene']} @ t={req.t_start:.0f}s" if script
                          else f"[mock] {Path(req.video).name} @ {req.t_start:.1f}s"),
                "violations": violations}
+        if req.with_risks:
+            # mock 默认不凭随机动作制造风险，显式场景才产生演示风险。
+            obj["risks"] = []
+            stem = Path(req.video).stem.lower()
+            if "fall_pos" in stem:
+                obj["risks"] = [{"risk_id": "fall", "name": "人员摔倒", "severity": "high",
+                                 "confidence": 0.93, "observable": "[演示] 中央人物由站立倒地，后续帧未起身",
+                                 "alert": True, "alert_reason": "[演示] 持续倒地，需要现场确认",
+                                 "person_desc": "画面中央"}]
 
         # 模拟"动作描述"（对应网页的摄像头监测页）。
         # 只有请求了 with_actions 才给 —— 与真实模型的行为一致，
@@ -395,14 +421,20 @@ class CloudBackend:
             images = [to_data_url(grid)]
             # 让格子的 #序号 与时间戳对上，模型才描述得准"第几帧手在做什么"
             labels = [
-                "上图是一个 2×2 网格，四格按时序排列："
-                + " ".join(f"#{i + 1}={lb}" for i, lb in enumerate(req.labels))
+                f"上图是含 {len(req.frames)} 帧的网格，按从左到右、从上到下时序排列："
+                + " ".join(f"#{i + 1}={req.labels[i] if i < len(req.labels) else f'帧{i + 1}'}"
+                           for i in range(len(req.frames)))
             ]
         else:
             images = [to_data_url(f) for f in req.frames]
             labels = req.labels
         messages = build_messages(bs, images, labels, with_alert=req.with_alert,
-                                  with_actions=req.with_actions)
+                                  with_actions=req.with_actions, with_risks=req.with_risks)
+        if self.stitch and len(req.frames) > 1:
+            messages[0]["content"] += (
+                "\n本次多帧拼在一张网格图内：evidence 必须引用各格左上角的原帧编号"
+                f" #1 至 #{len(req.frames)}，不是整张拼图的图片编号；每格是一帧，空格不是帧。"
+            )
 
         t0 = time.time()
         last_err: str | None = None
@@ -415,7 +447,11 @@ class CloudBackend:
                     "model": self.model,
                     "messages": messages,
                     "temperature": float(bs.defaults.get("temperature", 0.0)),
-                    "max_tokens": int(bs.defaults.get("max_new_tokens", 512)),
+                    # 保留原配置预算，按新增输出分别补余量，避免风险 JSON 被截断。
+                    "max_tokens": (int(bs.defaults.get("max_new_tokens", 512))
+                                   + (180 if req.with_alert else 0)
+                                   + (90 if req.with_actions else 0)
+                                   + (384 if req.with_risks else 0)),
                     "response_format": {"type": "json_object"},
                 }
                 if attempt > 0:
@@ -449,7 +485,7 @@ class CloudBackend:
                     retries += 1
                     continue
 
-                ok, problems = validate(obj, bs, strict=False)
+                ok, problems = validate(obj, bs, strict=False, with_risks=req.with_risks)
                 if not ok:
                     last_err = "; ".join(problems)
                     retries += 1
@@ -460,7 +496,7 @@ class CloudBackend:
                     video=req.video,
                     t_start=req.t_start,
                     t_end=req.t_end,
-                    parsed=obj,
+                    parsed=sanitize(obj, bs, frame_count=len(req.frames)),
                     raw=content,
                     retries=retries,
                     latency_sec=time.time() - t0,
@@ -542,6 +578,8 @@ class ClusterBackend:
                     self._cache[rec["window_id"]] = rec
 
     def infer(self, req: WindowRequest, bs: BehaviorSet) -> WindowResult:
+        from .prompts import sanitize
+
         rec = self._cache.get(req.window_id)
         if rec is None:
             return WindowResult(
@@ -558,7 +596,8 @@ class ClusterBackend:
             video=req.video,
             t_start=req.t_start,
             t_end=req.t_end,
-            parsed=rec.get("parsed"),
+            parsed=(sanitize(rec["parsed"], bs, frame_count=len(req.frames))
+                    if isinstance(rec.get("parsed"), dict) else None),
             raw=rec.get("raw", ""),
             error=rec.get("error"),
             latency_sec=float(rec.get("latency_sec", 0.0) or 0.0),

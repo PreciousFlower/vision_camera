@@ -43,6 +43,8 @@ class Alert:
     # 模型自己给出的告警理由（仅 aggregate.mode: ai 时有值）。
     # 这是"让 AI 判断"最大的附赠价值：人能看到它为什么现在就要提醒。
     reason: str = ""
+    # 配置行为与模型主动发现的开放风险分开标识，兼容原有构造调用。
+    source: str = "configured"
 
     def to_dict(self) -> dict:
         return {
@@ -59,6 +61,7 @@ class Alert:
             "evidences": self.evidences,
             "window_ids": self.window_ids,
             "reason": self.reason,
+            "source": self.source,
         }
 
 
@@ -111,7 +114,7 @@ def derive_events(
 
     for video, rs in by_video.items():
         rs = sorted(rs, key=lambda x: x.t_start)
-        clean = [(r, sanitize(r.parsed, bs) if r.parsed else None) for r in rs]
+        clean = [(r, sanitize(r.parsed, bs) if r.parsed and not r.error else None) for r in rs]
 
         for b in bs.enabled:
             series: list[tuple[WindowResult, float, dict]] = []
@@ -174,6 +177,8 @@ def derive_events(
             else:
                 # 滑动窗口 M/N：窗口右端逐格前移，统计窗口内命中数
                 for i in range(len(series)):
+                    if series[i][1] <= 0:
+                        continue  # 当前窗已未命中，不把历史命中再包装成新告警
                     lo = max(0, i - window_k + 1)
                     span_slice = series[lo : i + 1]
                     hits = [x for x in span_slice if x[1] > 0]
@@ -182,7 +187,72 @@ def derive_events(
                     emit(hits, span_slice[0][0].t_start, span_slice[-1][0].t_end,
                          len(span_slice))
 
+        if agg_cfg.get("open_risks", True) is True:
+            alerts.extend(_derive_risk_events(clean, video, mode, min_conf,
+                                              window_k, min_hits, dedup_sec))
+
     alerts.sort(key=lambda a: (Path(a.video).name, a.t_start))
+    return alerts
+
+
+def _derive_risk_events(clean, video: str, mode: str, min_conf: float,
+                        window_k: int, min_hits: int, dedup_sec: float) -> list[Alert]:
+    """开放风险按类别聚合；始终尊重 AI 的 alert=false，升级可突破去重。"""
+    severity_rank = {"low": 0, "medium": 1, "high": 2}
+    ids = sorted({risk["risk_id"] for _, s in clean if s for risk in s["risks"]})
+    alerts: list[Alert] = []
+    for risk_id in ids:
+        series = []
+        for result, parsed in clean:
+            # 缺失风险、跳过窗口、失败窗口均占一个真实时间窗口，命中记为零。
+            item = next((x for x in parsed["risks"] if x["risk_id"] == risk_id), {}) if parsed else {}
+            confidence = item.get("confidence", 0.0)
+            if item.get("alert") is not True or confidence < min_conf:
+                confidence = 0.0
+            series.append((result, confidence, item))
+
+        last_alert_t = -1e18
+        last_severity = -1
+        for index, current in enumerate(series):
+            if current[1] <= 0:
+                continue
+            if mode == "smoothed":
+                lo = max(0, index - window_k + 1)
+                span_slice = series[lo:index + 1]
+                hits = [x for x in span_slice if x[1] > 0]
+                if len(hits) < min_hits:
+                    continue
+                span = len(span_slice)
+            else:
+                hits = [current]
+                span = 1
+
+            # 当前风险升级时保留高等级证据和名称；旧的低等级提醒不能压住它。
+            representative = max(hits, key=lambda x: (severity_rank[x[2]["severity"]],
+                                                       x[0].t_start, x[1]))[2]
+            severity = severity_rank[representative["severity"]]
+            trigger_t = current[0].t_start
+            within_dedup = trigger_t - last_alert_t < dedup_sec
+            if within_dedup and severity <= last_severity:
+                continue
+            alerts.append(Alert(
+                behavior_id="ai_risk:" + risk_id,
+                behavior_name=representative["name"],
+                severity=representative["severity"],
+                video=video,
+                t_start=hits[0][0].t_start,
+                t_end=current[0].t_end,
+                hits=len(hits),
+                span=span,
+                max_confidence=max(x[1] for x in hits),
+                evidences=list(dict.fromkeys(x[2]["observable"] for x in hits))[:3],
+                person_desc=representative["person_desc"],
+                window_ids=[x[0].window_id for x in hits],
+                reason=representative["alert_reason"],
+                source="ai_risk",
+            ))
+            last_alert_t = trigger_t
+            last_severity = severity
     return alerts
 
 
@@ -205,9 +275,15 @@ def stability_report(
         total += 1
         votes = []
         for obj in objs:
-            v = {x["behavior_id"]: bool(x.get("violation"))
-                 for x in (obj.get("violations") or [])
-                 if isinstance(x, dict) and x.get("behavior_id")}
+            raw = obj.get("violations") or []
+            # Cloud/Cluster 后端返回归一化后的映射；Mock/旧结果仍可为列表。
+            # 这里统计模型结论，不再重复应用告警阈值或证据过滤。
+            if isinstance(raw, dict):
+                v = {bid: bool(item.get("violation"))
+                     for bid, item in raw.items() if bid and isinstance(item, dict)}
+            else:
+                v = {x["behavior_id"]: bool(x.get("violation"))
+                     for x in raw if isinstance(x, dict) and x.get("behavior_id")}
             votes.append(v)
             for bid, val in v.items():
                 if bid in per_behavior:

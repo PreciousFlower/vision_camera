@@ -17,6 +17,7 @@ import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import ExitStack
 from dataclasses import asdict
 from pathlib import Path
 
@@ -25,7 +26,9 @@ from .extract import Window
 from .vlm import Backend, WindowResult
 
 
-def behavior_fingerprint(bs: BehaviorSet) -> str:
+def behavior_fingerprint(bs: BehaviorSet, *, with_alert: bool = False,
+                         with_actions: bool = False,
+                         with_risks: bool = False) -> str:
     """行为定义 + 采样参数的指纹，用来给结果文件命名。
 
     ⚠️ 这是防"张冠李戴"的关键：改了 Prompt 但复用旧结果文件，
@@ -42,19 +45,22 @@ def behavior_fingerprint(bs: BehaviorSet) -> str:
                     b.evidence_required,
                     ";".join(b.counter_examples),
                     ";".join(b.observable_cues),
+                    json.dumps(b.evidence_checks, sort_keys=True, ensure_ascii=False),
+                    json.dumps(b.evidence_sequence, ensure_ascii=False),
                 ]
             )
         )
     parts.append(json.dumps(bs.defaults, sort_keys=True, ensure_ascii=False))
+    if with_alert or with_actions or with_risks:
+        parts.append(json.dumps({"with_alert": with_alert,
+                                 "with_actions": with_actions,
+                                 "with_risks": with_risks}, sort_keys=True))
     return hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()[:10]
 
 
-def load_done(out_path: Path) -> dict[str, dict]:
-    """读回已完成的结果，用于断点续跑。"""
-    done: dict[str, dict] = {}
-    if not out_path.exists():
-        return done
-    with open(out_path, "r", encoding="utf-8") as f:
+def _result_records(path: Path):
+    """Read object records while tolerating interrupted or non-object JSONL lines."""
+    with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -63,8 +69,18 @@ def load_done(out_path: Path) -> dict[str, dict]:
                 rec = json.loads(line)
             except json.JSONDecodeError:
                 continue  # 容忍被中断写坏的最后一行
-            if rec.get("window_id"):
-                done[rec["window_id"]] = rec
+            if isinstance(rec, dict):
+                yield rec
+
+
+def load_done(out_path: Path) -> dict[str, dict]:
+    """读回已完成的结果，用于断点续跑。"""
+    done: dict[str, dict] = {}
+    if not out_path.exists():
+        return done
+    for rec in _result_records(out_path):
+        if rec.get("window_id"):
+            done[rec["window_id"]] = rec
     return done
 
 
@@ -77,6 +93,9 @@ def run_windows(
     concurrency: int = 1,
     retry_failed: bool = False,
     verbose: bool = True,
+    with_alert: bool = False,
+    with_actions: bool = False,
+    with_risks: bool = False,
 ) -> dict:
     """跑完全部窗口，返回统计信息。
 
@@ -102,14 +121,28 @@ def run_windows(
     errors = 0
 
     def work(w: Window) -> WindowResult:
-        return backend.infer(w.to_request(), bs)
+        req = w.to_request()
+        req.with_alert = with_alert
+        req.with_actions = with_actions
+        req.with_risks = with_risks
+        return backend.infer(req, bs)
 
     concurrency = max(1, int(concurrency))
-    with open(out_path, "a", encoding="utf-8") as f:
+    # An interrupted final line must not swallow the first newly appended result.
+    needs_newline = False
+    if out_path.exists() and out_path.stat().st_size:
+        with open(out_path, "rb") as existing:
+            existing.seek(-1, 2)
+            needs_newline = existing.read(1) != b"\n"
+    with ExitStack() as resources:
+        f = resources.enter_context(open(out_path, "a", encoding="utf-8"))
+        if needs_newline and todo:
+            f.write("\n")
+            f.flush()
         if concurrency == 1 or len(todo) <= 1:
             it = (work(w) for w in todo)
         else:
-            ex = ThreadPoolExecutor(max_workers=concurrency)
+            ex = resources.enter_context(ThreadPoolExecutor(max_workers=concurrency))
             futs = [ex.submit(work, w) for w in todo]
             it = (fu.result() for fu in as_completed(futs))
 
@@ -161,14 +194,6 @@ def load_results(path: str | Path) -> list[WindowResult]:
     out: list[WindowResult] = []
     if not path.exists():
         return out
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                d = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            out.append(WindowResult(**d))
+    for record in _result_records(path):
+        out.append(WindowResult(**record))
     return out

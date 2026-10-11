@@ -22,6 +22,7 @@ import os
 import socket
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
@@ -215,12 +216,14 @@ def probe_source(spec: str, *, timeout_sec: int = 15) -> SourceInfo:
         # ⚠️ 这里用闭包捕获 tr，不要写成 def worker(_tr=tr) 再在异常分支里
         #    引用 _tr —— 默认参数只在函数签名作用域里存在，
         #    外层 except 里引用会 NameError（实测踩到）。
-        def worker() -> None:
+        # 超时后的线程仍可能完成，必须绑定本次参数和结果箱，避免写到下一次
+        # UDP 尝试；下面的绑定参数仅在 worker 内使用，外层仍使用 tr/box。
+        def worker(_transport=tr, _result=box) -> None:
             try:
                 cap, k, _s, err = open_source(spec, timeout_sec=timeout_sec,
-                                              transport=tr or "tcp")
+                                              transport=_transport or "tcp")
                 if cap is None:
-                    box["info"] = SourceInfo(kind=k, label=label, ok=False, error=err)
+                    _result["info"] = SourceInfo(kind=k, label=label, ok=False, error=err)
                     return
                 try:
                     backend = cap.getBackendName() if hasattr(cap, "getBackendName") else ""
@@ -239,17 +242,17 @@ def probe_source(spec: str, *, timeout_sec: int = 15) -> SourceInfo:
                     measured = got / dt if got >= 2 else 0.0
 
                     if got == 0:
-                        box["info"] = SourceInfo(
+                        _result["info"] = SourceInfo(
                             kind=k, label=label, ok=False, backend=str(backend),
                             width=w, height=h,
                             error="能打开但读不到画面（RTSP 认证后无流 / 设备被占用）",
                         )
                         return
-                    box["info"] = SourceInfo(
+                    _result["info"] = SourceInfo(
                         kind=k, label=label, ok=True, backend=str(backend),
                         width=w, height=h,
                         measured_fps=round(measured or fps_reported, 2),
-                        transport=tr,
+                        transport=_transport,
                     )
                 finally:
                     try:
@@ -257,7 +260,7 @@ def probe_source(spec: str, *, timeout_sec: int = 15) -> SourceInfo:
                     except Exception:
                         pass
             except Exception as e:
-                box["info"] = SourceInfo(kind=kind, label=label, ok=False,
+                _result["info"] = SourceInfo(kind=kind, label=label, ok=False,
                                          error=f"{type(e).__name__}: {e}")
 
         th = threading.Thread(target=worker, daemon=True)
@@ -336,6 +339,8 @@ class StreamReader:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_preview = 0.0
+        self._last_encoded = 0.0
+        self.history_jpegs = deque(maxlen=256)  # <=32s at 8fps; RAM only.
 
     # ── 生命周期 ──
     def start(self) -> None:
@@ -351,6 +356,10 @@ class StreamReader:
         if th is not None:
             th.join(timeout=2.0)
         self._thread = None
+        with self.lock:
+            self.history_jpegs.clear()
+            self.frame = None
+            self.jpeg = None
 
     # ── 读帧主循环 ──
     def _loop(self) -> None:
@@ -362,6 +371,8 @@ class StreamReader:
                 ok, frame = self.cap.read()
             except Exception:                      # noqa: BLE001
                 ok, frame = False, None
+            if self._stop.is_set():
+                break
             if not ok or frame is None:
                 self.read_fail += 1
                 fail_streak += 1
@@ -379,13 +390,16 @@ class StreamReader:
                 frame = cv2.resize(frame, (int(w * s), int(h * s)),
                                    interpolation=cv2.INTER_AREA)
 
+            now = time.time()
             jpeg = None
             try:
-                ok2, buf = cv2.imencode(
-                    ".jpg", frame,
-                    [int(cv2.IMWRITE_JPEG_QUALITY), int(self.jpeg_quality)])
-                if ok2:
-                    jpeg = buf.tobytes()
+                if now - self._last_encoded >= 0.125:
+                    ok2, buf = cv2.imencode(
+                        ".jpg", frame,
+                        [int(cv2.IMWRITE_JPEG_QUALITY), int(self.jpeg_quality)])
+                    if ok2:
+                        jpeg = buf.tobytes()
+                        self._last_encoded = now
             except Exception:                      # noqa: BLE001
                 pass
 
@@ -394,6 +408,7 @@ class StreamReader:
                 self.frame = frame
                 if jpeg is not None:
                     self.jpeg = jpeg
+                    self.history_jpegs.append((now, jpeg))
                 self.seq += 1
                 self.t = now
                 self.frames_read += 1
@@ -406,9 +421,9 @@ class StreamReader:
                                                  >= self.preview_interval):
                 self._last_preview = now
                 try:
-                    if jpeg is not None:
+                    if self.jpeg is not None:
                         pvf = self.preview_dir / f"preview_{int(now * 1000):013d}.jpg"
-                        pvf.write_bytes(jpeg)
+                        pvf.write_bytes(self.jpeg)
                         olds = sorted(self.preview_dir.glob("preview_*.jpg"))[:-3]
                         for old in olds:
                             try:
@@ -417,6 +432,10 @@ class StreamReader:
                                 pass
                 except OSError:
                     pass
+
+    def snapshot_history(self):
+        with self.lock:
+            return list(self.history_jpegs)
 
     # ── 给取样方：取"此刻最新"的一帧 ──
     def take_newer(self, last_seq: int, timeout: float = 2.0):
@@ -789,12 +808,15 @@ def frame_motion(paths: list[str], *, size: int = 48) -> float:
         （4 张图约 3~5 毫秒，相对于十秒的推理可以忽略）。
 
     返回值量纲是灰度差（0~255）：静止画面通常在 1 以下，有人走动通常 > 5。
+    可读帧少于两张时返回 -1，表示无法测量；不能把损坏输入视为静止。
     """
     import cv2
 
     prev = None
     worst = 0.0
-    for p in paths[:4]:
+    readable = 0
+    # 当前窗口包含历史上下文和新帧，必须检查整窗，不能只检查最早四帧。
+    for p in paths:
         try:
             img = cv2.imread(p, cv2.IMREAD_GRAYSCALE)
         except Exception:                       # noqa: BLE001
@@ -802,10 +824,11 @@ def frame_motion(paths: list[str], *, size: int = 48) -> float:
         if img is None:
             continue
         small = cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA)
+        readable += 1
         if prev is not None:
             worst = max(worst, float(cv2.absdiff(small, prev).mean()))
         prev = small
-    return worst
+    return worst if readable >= 2 else -1.0
 
 
 def list_local_cameras(max_index: int = 4, *, with_detail: bool = False):

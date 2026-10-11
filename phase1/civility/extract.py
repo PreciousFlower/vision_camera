@@ -1,23 +1,25 @@
 """抽帧 —— 把视频切成"判断窗口"，每个窗口是若干张连续帧。
 
 窗口（window）是整个系统的判断单位：
-    一段 4 秒、含 4 帧的窗口 → 一次 VLM 调用 → 一个是否违规的结论
+    一段上下文及其中的多帧 → 一次 VLM 调用 → 一个是否违规的结论。
+    当前文件分析默认6秒、最多18帧，每2秒前移一次。
 
 为什么是"按固定速率整段抽帧 + 事后组窗"，而不是"边播边抽"：
     第一阶段要反复调 Prompt。抽帧是一次性成本（几秒），
     之后改 Prompt 只重跑推理，不用重新解码视频 —— 迭代速度差一个数量级。
 
-分辨率策略（实测取舍）：
-    长边缩到 640px。人在这分辨率下动作可辨，单帧从 ~1.5MB 降到 ~80KB，
-    上传集群（SFTP 1.25 MB/s）和云端 token 成本都大幅下降。
-    640 → 448 会明显丢"手里有没有拿东西"这类关键细节，不建议再降。
+分辨率策略：
+    当前配置长边960px，为烟支和手中小物体保留细节。
+    低分辨率可能丢失关键物体，高分辨率会增加上传量和推理开销。
 """
 from __future__ import annotations
 
 import json
+import math
 import re
 import shutil
 import subprocess
+from bisect import bisect_left
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -45,6 +47,10 @@ class Window:
     #     决定。两边各自知道自己的序号，所以由**构造窗口的人**填。
     #     -1 = 未提供（旧调用方/序列化回来的记录），调用方回退旧算法。
     idx0: int = -1
+
+    @property
+    def frame_indices(self) -> list[int]:
+        return [frame_index_of(p) for p in self.frames]
 
     def to_request(self) -> WindowRequest:
         return WindowRequest(
@@ -112,10 +118,18 @@ def extract_frames(
 
     # 已抽过就直接复用（抽帧是"一次性成本"的关键前提）
     existing = sorted(out_dir.glob("f_*.jpg"))
-    if existing and not overwrite:
+    cache_file = out_dir / "sampling.json"
+    signature = {"video": str(video.resolve()), "size": video.stat().st_size,
+                 "mtime_ns": video.stat().st_mtime_ns, "fps": fps,
+                 "max_side": max_side, "jpeg_quality": jpeg_quality}
+    try:
+        cached = json.loads(cache_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cached = None
+    if existing and not overwrite and cached == signature:
         return [(i / fps, str(p)) for i, p in enumerate(existing)]
 
-    if overwrite:
+    if existing:
         for p in existing:
             p.unlink()
 
@@ -145,6 +159,7 @@ def extract_frames(
     )
 
     files = sorted(out_dir.glob("f_*.jpg"))
+    cache_file.write_text(json.dumps(signature), encoding="utf-8")
     return [(i / fps, str(p)) for i, p in enumerate(files)]
 
 
@@ -154,10 +169,12 @@ def build_windows(
     *,
     window_stride_sec: float = 4.0,
     max_frames_per_window: int = 4,
+    window_duration_sec: float | None = None,
 ) -> list[Window]:
     """把帧序列切成判断窗口。
 
-    窗口内的帧数 = min(max_frames_per_window, stride 内实际抽到的帧数)。
+    window_duration_sec 决定上下文时长，stride 决定向前移动的间隔。
+    超过上限时均匀取样，保留首尾帧；较长上下文允许相邻窗口重叠。
     帧太少（<2）时不做时序判断 —— 单帧无法区分"手持"和"已丢弃"，
     这时宁可不判，也不要给模型一个它必然答错的题。
     """
@@ -165,31 +182,37 @@ def build_windows(
     stem = Path(video).stem
     windows: list[Window] = []
 
-    if window_stride_sec <= 0:
+    if not math.isfinite(window_stride_sec) or window_stride_sec <= 0:
         raise ValueError("window_stride_sec 必须为正数")
     if not frames:
         return windows
 
-    # 按时间分桶。用"桶号 = floor(t / stride)"直接定位，
-    # 不做游标推进 —— 游标在稀疏帧下可能不前进，那是死循环的来源。
-    n_buckets = int(frames[-1][0] // window_stride_sec) + 1
-    buckets: dict[int, list[tuple[float, str]]] = {}
-    for t, p in frames:
-        buckets.setdefault(int(t // window_stride_sec), []).append((t, p))
-
-    for bi in range(n_buckets):
-        block = sorted(buckets.get(bi, []))[:max_frames_per_window]
+    duration = window_duration_sec if window_duration_sec is not None else window_stride_sec
+    if not math.isfinite(duration) or duration < window_stride_sec:
+        raise ValueError("窗口时长必须不小于窗口步长")
+    if max_frames_per_window < 2:
+        raise ValueError("每窗至少需要2帧")
+    ordered = sorted(frames)
+    times = [f[0] for f in ordered]
+    interval = ordered[-1][0] - ordered[-2][0] if len(ordered) > 1 else 0
+    end = ordered[-1][0] + interval
+    # The last window already covers the tail. Do not re-analyze shorter subsets
+    # that omit the same action's earlier evidence (e.g. cigarette vs later smoke).
+    n_windows = max(1, math.ceil((end - duration) / window_stride_sec) + 1)
+    for bi in range(n_windows):
+        t_start = bi * window_stride_sec
+        block = ordered[bisect_left(times, t_start):bisect_left(times, t_start + duration)]
+        block = sample_evenly(block, max_frames_per_window)
         if len(block) < 2:
             continue  # 帧不足，跳过（见函数文档）
 
-        t_start = bi * window_stride_sec
         wid = f"{stem}__w{len(windows):04d}"
         windows.append(
             Window(
                 window_id=wid,
                 video=video,
                 t_start=round(t_start, 2),
-                t_end=round(t_start + window_stride_sec, 2),
+                t_end=round(min(t_start + duration, end), 2),
                 frames=[p for _, p in block],
                 labels=[f"t={t:.1f}s" for t, _ in block],
                 # 视频文件路径下帧名是 f_%05d.jpg（ffmpeg 按 -start_number 0
@@ -199,6 +222,15 @@ def build_windows(
             )
         )
     return windows
+
+
+def sample_evenly(items: list, limit: int) -> list:
+    """Keep both endpoints and distribute the frame budget over the whole interval."""
+    if len(items) <= limit:
+        return items
+    if limit < 2:
+        raise ValueError("采样上限至少为2")
+    return [items[round(i * (len(items) - 1) / (limit - 1))] for i in range(limit)]
 
 
 # ⚠️ 帧文件名 → 全局帧序号。**只认文件名里的数字**，不 stat 文件、不猜时间。

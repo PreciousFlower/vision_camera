@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import socket
 import sys
 import threading
@@ -110,9 +111,16 @@ class Gateway:
                     buf += d
         except OSError:
             return False
-        low = buf.lower()
         # /health 返回 {"ready": true, ...}；只认 ready=true
-        return b'"ready"' in low and b"true" in low
+        try:
+            headers, body = buf.split(b"\r\n\r\n", 1)
+            status = headers.split(b"\r\n", 1)[0].split()
+            if len(status) < 2 or not status[0].startswith(b"HTTP/") or status[1] != b"200":
+                return False
+            info = json.loads(body)
+        except (ValueError, UnicodeError):
+            return False
+        return isinstance(info, dict) and info.get("ready") is True
 
     def _pipe(self, src: socket.socket, dst: socket.socket) -> None:
         try:

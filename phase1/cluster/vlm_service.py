@@ -81,6 +81,8 @@ def load_behaviors_from(path: str):
             evidence_required=b.get("evidence_required", ""),
             counter_examples=b.get("counter_examples") or [],
             observable_cues=b.get("observable_cues") or [],
+            evidence_checks=b.get("evidence_checks", {}),
+            evidence_sequence=b.get("evidence_sequence", []),
             severity=b.get("severity", "medium"),
             enabled=True,
         )
@@ -118,6 +120,7 @@ def load_model(model_name: str) -> None:
     try:
         import torch
         from transformers import AutoProcessor
+        torch.set_num_threads(max(1, int(os.environ.get("VLM_CPU_THREADS", "2"))))
 
         try:
             from transformers import Qwen3VLForConditionalGeneration as Cls
@@ -126,9 +129,17 @@ def load_model(model_name: str) -> None:
 
         print(f"[load] {model_name} …", flush=True)
         model = Cls.from_pretrained(
-            model_name, dtype=torch.bfloat16, device_map="auto", trust_remote_code=True
+            model_name, dtype=torch.bfloat16, device_map="auto", trust_remote_code=True,
+            attn_implementation="sdpa",
         ).eval()
         proc = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+        vision_cache = None
+        inner = getattr(model, "model", None)
+        if (os.environ.get("VLM_VISION_CACHE", "1") != "0" and
+                callable(getattr(inner, "get_image_features", None))):
+            from cluster.vision_cache import VisionCache
+            vision_cache = VisionCache(inner.get_image_features)
+            inner.get_image_features = vision_cache
 
         try:
             from qwen_vl_utils import process_vision_info  # noqa: F401
@@ -145,6 +156,7 @@ def load_model(model_name: str) -> None:
             ready=True,
             loading=False,
             load_sec=round(time.time() - t0, 1),
+            vision_cache=vision_cache,
         )
         print(f"[load] 完成，用时 {time.time() - t0:.1f}s  设备 {STATE['device']}", flush=True)
     except Exception as e:
@@ -177,10 +189,12 @@ def decode_images(frames: list) -> list:
 
 
 def infer_one(frames: list, labels: list[str], max_new_tokens: int, few_shot: bool,
-              with_alert: bool = False, with_actions: bool = False) -> dict:
+              with_alert: bool = False, with_actions: bool = False,
+              with_risks: bool = False, behaviors=None) -> dict:
     """单请求推理（保留给 batch=1 的路径与调试用）。"""
+    options = {"behaviors": behaviors} if behaviors is not None else {}
     fut = BATCHER.submit(frames, labels, max_new_tokens, few_shot,
-                         with_alert, with_actions)
+                         with_alert, with_actions, with_risks, **options)
     return fut.result(timeout=BATCH_TIMEOUT_SEC)
 
 
@@ -203,19 +217,24 @@ def infer_one(frames: list, labels: list[str], max_new_tokens: int, few_shot: bo
 #    设 VLM_BATCH_WAIT_MS=0 就退化成"来一个算一个"（老行为）。
 
 BATCH_MAX = int(os.environ.get("VLM_BATCH_MAX", "8") or 8)
-BATCH_WAIT_MS = int(os.environ.get("VLM_BATCH_WAIT_MS", "150") or 0)
+BATCH_WAIT_MS = int(os.environ.get("VLM_BATCH_WAIT_MS", "25") or 0)
 BATCH_TIMEOUT_SEC = float(os.environ.get("VLM_BATCH_TIMEOUT", "600") or 600)
 
 
 class _Item:
     __slots__ = ("frames", "labels", "max_new_tokens", "few_shot",
-                 "with_alert", "with_actions", "future")
+                 "with_alert", "with_actions", "with_risks", "future", "behaviors", "queued_at", "qa")
 
-    def __init__(self, frames, labels, n, few, alert, actions, future):
+    def __init__(self, frames, labels, n, few, alert, actions, future,
+                 risks=False, behaviors=None, qa=None):
         self.frames, self.labels = frames, labels
         self.max_new_tokens, self.few_shot = n, few
         self.with_alert, self.with_actions = alert, actions
+        self.with_risks = risks
         self.future = future
+        self.behaviors = behaviors
+        self.qa = qa
+        self.queued_at = time.perf_counter()
 
 
 class Batcher:
@@ -241,10 +260,10 @@ class Batcher:
               f"凑批等待 {BATCH_WAIT_MS}ms", flush=True)
 
     def submit(self, frames, labels, max_new_tokens, few_shot, with_alert,
-               with_actions):
+               with_actions, with_risks=False, behaviors=None, qa=None):
         fut: "concurrent.futures.Future[dict]" = concurrent.futures.Future()
         it = _Item(frames, labels, max_new_tokens, few_shot, with_alert,
-                   with_actions, fut)
+                   with_actions, fut, with_risks, behaviors, qa)
         with self.cv:
             self.q.append(it)
             self.cv.notify()
@@ -255,11 +274,17 @@ class Batcher:
             while not self.q:
                 self.cv.wait(timeout=1.0)
                 if not self.q:
+                    cache = STATE.get("vision_cache")
+                    if cache is not None:
+                        cache._expire(time.monotonic())
                     return []
-            batch = self.q[:BATCH_MAX]
+            # Long QA answers must not lengthen a detection batch's token budget.
+            mode = self.q[0].qa is not None
+            boundary = next((i for i, it in enumerate(self.q) if (it.qa is not None) != mode), len(self.q))
+            batch = self.q[:min(BATCH_MAX, boundary)]
             del self.q[:len(batch)]
             # 还有余量就再等一小会儿，让"几乎同时到"的请求凑进同一批。
-            # 等待时间很短（默认 150ms）：用户看到的延迟增加有限，
+            # 等待时间很短（默认 25ms）：用户看到的延迟增加有限，
             # 但批量带来的是数倍吞吐 —— 这笔交易在任何监控场景都划算。
             if len(batch) < BATCH_MAX and BATCH_WAIT_MS > 0:
                 deadline = time.time() + BATCH_WAIT_MS / 1000.0
@@ -269,9 +294,12 @@ class Batcher:
                         break
                     self.cv.wait(timeout=remain)
                     if self.q:
-                        more = self.q[:BATCH_MAX - len(batch)]
+                        boundary = next((i for i, it in enumerate(self.q) if (it.qa is not None) != mode), len(self.q))
+                        more = self.q[:min(BATCH_MAX - len(batch), boundary)]
                         del self.q[:len(more)]
                         batch.extend(more)
+                        if boundary == 0:
+                            break
             return batch
 
     def _loop(self) -> None:
@@ -306,8 +334,6 @@ def _build_inputs(items: list[_Item]):
     批量测试里 4 个请求文本完全相同、恰好不需要填充，所以掩盖了这个问题 ——
     真实场景下各窗口的标签长度不同，填充方向错了结果就是错的。
     """
-    import torch
-
     from civility.prompts import build_messages
 
     bs = STATE["behaviors"]
@@ -315,15 +341,22 @@ def _build_inputs(items: list[_Item]):
     if getattr(proc, "tokenizer", None) is not None:
         proc.tokenizer.padding_side = "left"
 
-    texts, images = [], []
+    texts, images, flat_images = [], [], []
     for it in items:
+        bs = it.behaviors if it.behaviors is not None else STATE["behaviors"]
         imgs = decode_images(it.frames)
-        msgs = build_messages(bs, imgs, it.labels, with_few_shot=it.few_shot,
+        if it.qa is not None:
+            from civility.video_qa import build_qa_messages
+            msgs = build_qa_messages(imgs, it.qa)
+        else:
+            msgs = build_messages(bs, imgs, it.labels, with_few_shot=it.few_shot,
                               with_alert=it.with_alert,
-                              with_actions=it.with_actions)
+                              with_actions=it.with_actions,
+                              with_risks=it.with_risks)
         texts.append(proc.apply_chat_template(msgs, tokenize=False,
                                               add_generation_prompt=True))
         images.append(msgs)
+        flat_images.extend(imgs)
 
     if STATE.get("has_qvu"):
         from qwen_vl_utils import process_vision_info
@@ -331,8 +364,7 @@ def _build_inputs(items: list[_Item]):
         image_inputs, video_inputs = process_vision_info(images)
         return proc(text=texts, images=image_inputs, videos=video_inputs,
                     padding=True, return_tensors="pt")
-    flat = [im for ims in images for im in ims]
-    return proc(text=texts, images=None, padding=True, return_tensors="pt")
+    return proc(text=texts, images=flat_images, padding=True, return_tensors="pt")
 
 
 def infer_batch(items: list[_Item]) -> list[dict]:
@@ -346,7 +378,13 @@ def infer_batch(items: list[_Item]) -> list[dict]:
         raise RuntimeError(f"模型未就绪：{STATE.get('error') or '仍在加载'}")
     model = STATE["model"]
 
+    prepare_started = time.perf_counter()
     inputs = _build_inputs(items).to(model.device)
+    prepare_sec = time.perf_counter() - prepare_started
+    cache = STATE.get("vision_cache")
+    if cache is not None:
+        from cluster.vision_cache import frame_key
+        cache.keys = [frame_key(f) for it in items for f in it.frames]
     n_prompt = int(inputs.input_ids.shape[1])
     max_new = max(it.max_new_tokens for it in items)
 
@@ -360,26 +398,49 @@ def infer_batch(items: list[_Item]) -> list[dict]:
     trimmed = gen[:, n_prompt:]
     outs = proc.batch_decode(trimmed, skip_special_tokens=True,
                              clean_up_tokenization_spaces=False)
+    decoded_at = time.perf_counter()
 
     results = []
-    for raw in outs:
+    for index, (it, raw) in enumerate(zip(items, outs)):
+        bs = it.behaviors if it.behaviors is not None else STATE["behaviors"]
+        # A batch can finish at different token positions; padding is not output.
+        tokenizer = getattr(proc, "tokenizer", None)
+        eos = getattr(tokenizer, "eos_token_id", None)
+        if eos is None:
+            eos = getattr(getattr(model, "generation_config", None), "eos_token_id", None)
+        eos_ids = set(eos if isinstance(eos, (list, tuple)) else [eos]) - {None}
+        row = trimmed[index]
+        ids = row.tolist() if callable(getattr(row, "tolist", None)) else []
+        end = next((i + 1 for i, token in enumerate(ids) if token in eos_ids), None)
+        output_tokens = end if end is not None else len(ids) or int(trimmed.shape[1])
+        finish_reason = "length" if end is None and output_tokens >= max_new else "stop"
         obj = extract_json(raw)
         if obj is None:
             results.append({"parsed": None, "raw": raw,
                             "error": "输出里找不到合法 JSON",
                             "latency_sec": round(latency, 3),
                             "tokens_prompt": n_prompt,
-                            "tokens_out": int(trimmed.shape[1]),
+                            "tokens_out": output_tokens, "finish_reason": finish_reason,
                             "batch": len(items)})
             continue
-        ok, problems = validate(obj, bs, strict=False)
-        parsed = sanitize(obj, bs)
+        if it.qa is not None:
+            from civility.video_qa import validate_answer
+            try:
+                parsed = validate_answer(obj, it.qa["evidence"])
+                ok, problems = True, []
+            except ValueError as exc:
+                parsed, ok, problems = None, False, [str(exc)]
+        else:
+            ok, problems = validate(obj, bs, strict=False, with_risks=it.with_risks)
+            parsed = sanitize(obj, bs, frame_count=len(it.frames))
         results.append({
-            "parsed": parsed, "raw": raw, "error": None,
+            "parsed": parsed, "raw": raw,
+            # 保留归一化结果方便诊断，但结构失败不能当成一次有效检查。
+            "error": None if ok else "Schema 校验失败: " + "; ".join(problems),
             "valid": ok, "problems": problems,
             "latency_sec": round(latency, 3),
             "tokens_prompt": n_prompt,
-            "tokens_out": int(trimmed.shape[1]),
+            "tokens_out": output_tokens, "finish_reason": finish_reason,
             # 批量大小要透出到页面：用户能直接看到"这批算了几个窗口"，
             # 也就知道调度的收益有没有真的发生
             "batch": len(items),
@@ -387,19 +448,15 @@ def infer_batch(items: list[_Item]) -> list[dict]:
     STATE["requests"] += len(items)
     STATE["last_latency"] = latency
     STATE["latencies"].append(round(latency, 3))
-    return results
-
     STATE["latencies"] = STATE["latencies"][-50:]
-    return {
-        "parsed": sanitize(obj, bs) if ok else None,
-        "raw": raw,
-        "error": None if ok else "Schema 校验失败: " + "; ".join(problems),
-        "latency_sec": round(latency, 3),
-        # 这两个数决定用户体验：出字太长就是"慢"的主因，要回去压缩输出格式
-        "tokens_prompt": n_prompt,
-        "tokens_out": n_new,
-        "tok_per_sec": round(n_new / latency, 1) if latency > 0 else None,
-    }
+    for it, result in zip(items, results):
+        result["timing"] = {
+            "queue_sec": round(max(0.0, prepare_started - it.queued_at), 3),
+            "prepare_sec": round(prepare_sec, 3),
+            "generate_sec": round(latency, 3),
+            "decode_sec": round(max(0.0, decoded_at - prepare_started - prepare_sec - latency), 3),
+        }
+    return results
 
 
 # ─────────────────────────── HTTP 服务 ───────────────────────────
@@ -441,6 +498,8 @@ class Handler(BaseHTTPRequestHandler):
             bs = STATE["behaviors"]
             return self._json(200, {
                 "ok": True,
+                "behavior_protocol": 2,
+                "video_qa_protocol": 1,
                 "hostname": socket.gethostname(),
                 "ready": STATE["ready"],
                 "loading": STATE["loading"],
@@ -458,6 +517,14 @@ class Handler(BaseHTTPRequestHandler):
                 ),
                 "behaviors": [b.id for b in bs.enabled] if bs else [],
                 "pid": os.getpid(),
+                "batcher": {**BATCHER.stats, "queued": len(BATCHER.q),
+                            "max_batch": BATCH_MAX, "wait_ms": BATCH_WAIT_MS},
+                "vision_cache": ({"images": len(STATE["vision_cache"].entries),
+                                  "bytes": STATE["vision_cache"].bytes,
+                                  "hits": STATE["vision_cache"].hits,
+                                  "misses": STATE["vision_cache"].misses,
+                                  "supported": STATE["vision_cache"].supported}
+                                 if STATE.get("vision_cache") else None),
             })
 
         if path == "/behaviors":
@@ -472,6 +539,8 @@ class Handler(BaseHTTPRequestHandler):
                         "evidence_required": b.evidence_required,
                         "counter_examples": b.counter_examples,
                         "observable_cues": b.observable_cues,
+                        "evidence_checks": b.evidence_checks,
+                        "evidence_sequence": b.evidence_sequence,
                         "severity": b.severity,
                     }
                     for b in bs.enabled
@@ -493,6 +562,31 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._json(500, {"error": f"{type(e).__name__}: {e}"})
 
+        if path == "/video-qa":
+            if not self._auth_ok():
+                return self._json(403, {"error": "token 不对"})
+            if not STATE["ready"]:
+                return self._json(503, {"error": "模型未就绪"})
+            try:
+                from civility.video_qa import validate_request
+                body = self._read_json()
+                qa = validate_request(body)
+                tokens = body.get("max_new_tokens", 768)
+                if not isinstance(tokens, int) or isinstance(tokens, bool) or not 256 <= tokens <= 1536:
+                    raise ValueError("问答输出 token 须为 256 至 1536")
+            except (ValueError, TypeError) as exc:
+                return self._json(400, {"error": str(exc)})
+            try:
+                res = BATCHER.submit(body["frames"], [], tokens, False, False, False, qa=qa).result(timeout=BATCH_TIMEOUT_SEC)
+                res.update({"ok": res.get("error") is None, "model": STATE["model_name"],
+                            "hostname": socket.gethostname()})
+                if res.get("error"):
+                    STATE["errors"] += 1
+                return self._json(200, res)
+            except Exception as exc:
+                STATE["errors"] += 1
+                return self._json(500, {"error": f"{type(exc).__name__}: {exc}"})
+
         if path == "/infer":
             if not self._auth_ok():
                 return self._json(403, {"error": "token 不对"})
@@ -511,6 +605,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not frames:
                     return self._json(400, {"error": "frames 为空"})
                 labels = body.get("labels") or [f"帧{i + 1}" for i in range(len(frames))]
+                from civility.config import parse_behaviors
+                requested_behaviors = (parse_behaviors(body["behaviors"])
+                                       if isinstance(body.get("behaviors"), dict) else None)
                 res = infer_one(
                     frames,
                     labels,
@@ -518,6 +615,8 @@ class Handler(BaseHTTPRequestHandler):
                     bool(body.get("few_shot", False)),
                     bool(body.get("with_alert", False)),
                     bool(body.get("with_actions", False)),
+                    bool(body.get("with_risks", False)),
+                    behaviors=requested_behaviors,
                 )
                 res.update({
                     "ok": res.get("error") is None,

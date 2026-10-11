@@ -87,6 +87,8 @@ def load_behaviors_json(path: Path):
                 evidence_required=b.get("evidence_required", ""),
                 counter_examples=b.get("counter_examples") or [],
                 observable_cues=b.get("observable_cues") or [],
+                evidence_checks=b.get("evidence_checks", {}),
+                evidence_sequence=b.get("evidence_sequence", []),
                 severity=b.get("severity", "medium"),
                 enabled=True,
             )
@@ -110,6 +112,14 @@ def load_done(path: Path) -> set[str]:
             if rec.get("window_id") and not rec.get("error"):
                 done.add(rec["window_id"])
     return done
+
+
+def load_request_options(path: Path) -> dict[str, bool]:
+    """新版作业包带请求选项，旧包保持原来的固定行为推理。"""
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    options = raw.get("request_options") or {}
+    return {key: bool(options.get(key, False))
+            for key in ("with_alert", "with_actions", "with_risks")}
 
 
 def main() -> int:
@@ -144,6 +154,7 @@ def main() -> int:
     from civility.prompts import build_messages, extract_json, sanitize, validate
 
     bs = load_behaviors_json(behaviors_path)
+    request_options = load_request_options(behaviors_path)
     print(f"[cfg] 启用行为 {len(bs.enabled)} 个: {[b.id for b in bs.enabled]}", flush=True)
 
     windows = []
@@ -223,6 +234,7 @@ def main() -> int:
                     imgs,
                     w.get("labels") or [f"帧{j + 1}" for j in range(len(imgs))],
                     with_few_shot=args.few_shot,
+                    **request_options,
                 )
 
                 if has_qvu:
@@ -258,10 +270,11 @@ def main() -> int:
                     rec["error"] = "输出里找不到合法 JSON"
                 else:
                     # strict=False：质量 lint 不算错误，避免无谓的失败重试
-                    ok, problems = validate(obj, bs, strict=False)
+                    ok, problems = validate(obj, bs, strict=False,
+                                            with_risks=request_options["with_risks"])
                     if not ok:
                         rec["error"] = "Schema 校验失败: " + "; ".join(problems)
-                    rec["parsed"] = sanitize(obj, bs) if ok else None
+                    rec["parsed"] = sanitize(obj, bs, frame_count=len(imgs)) if ok else None
                 rec["raw"] = raw
             except Exception as e:
                 rec["error"] = f"{type(e).__name__}: {e}"

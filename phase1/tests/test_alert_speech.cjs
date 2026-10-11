@@ -1,0 +1,23 @@
+const assert=require('node:assert/strict');
+const AlertSpeech=require('../webui/static/alert_speech.js');
+const store=new Map();const storage={getItem:k=>store.get(k),setItem:(k,v)=>store.set(k,v)};
+class Utterance{constructor(text){this.text=text;}}
+let now=10000;const spoken=[];let cancelled=0;
+const synth={getVoices:()=>[{lang:'zh-CN'}],speak:u=>spoken.push(u),cancel:()=>cancelled++};
+const speaker=new AlertSpeech({synth,Utterance,storage,now:()=>now});
+const alert={behavior_id:'smoking',behavior_name:'吸烟',t_start:2,t_end:4,severity:'medium',reason:'画面可见烟支'};
+speaker.seed('bad',{});speaker.notify('bad',[null,42,{},'unconfirmed']);assert.equal(spoken.length,0);
+speaker.enable(true);speaker.notify('a',[alert]);
+assert.equal(spoken.length,1);assert.match(spoken[0].text,/吸烟/);assert.match(spoken[0].text,/2.0秒/);
+speaker.notify('a',[{...alert,t_end:8}]);assert.equal(speaker.queue.length,0);assert.equal(spoken.length,1);
+spoken[0].onend();
+speaker.seed('b',[alert]);speaker.notify('b',[alert]);assert.equal(spoken.length,1);
+speaker.begin('a');speaker.notify('a',[alert],{demo:true,live:true});assert.match(spoken[1].text,/演示告警/);spoken[1].onend();
+speaker.notify('a',[{...alert,severity:'high'}]);assert.equal(spoken.length,3);spoken[2].onend();
+speaker.notify('many',Array.from({length:30},(_,i)=>({...alert,t_start:i})));
+assert.ok(speaker.queue.length<=8);now+=21000;spoken[3].onend();assert.equal(speaker.queue.length,0);
+speaker.enable(false);speaker.notify('disabled',[alert]);assert.equal(spoken.length,4);assert.ok(cancelled);
+const restored=new AlertSpeech({synth,Utterance,storage});restored.enable(true);restored.notify('a',[alert]);assert.equal(spoken.length,4);restored.enable(false);
+const unsupported=new AlertSpeech({synth:null,Utterance:null,storage});assert.equal(unsupported.enable(true),false);
+speaker.enable(true);speaker.notify('failure',[alert]);spoken.at(-1).onerror();assert.equal(speaker.enabled,false);
+console.log('Speech: dedup, evolving alerts, restored history, rerun, severity upgrade, bounded queue, stale alerts, mute and errors passed.');

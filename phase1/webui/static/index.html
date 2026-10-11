@@ -5,230 +5,110 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>智巡 · 视频行为分析平台</title>
 <style>
+
 :root{
-  --bg:#0b0e14; --bg2:#11151d; --panel:#151a24; --panel2:#1b2130; --line:#232b3a;
-  --fg:#e8ecf4; --fg2:#a8b3c7; --dim:#6b7789; --accent:#3b82f6; --accent2:#60a5fa;
-  --ok:#22c55e; --warn:#f59e0b; --err:#ef4444; --hit:#f87171; --purple:#8b5cf6;
-  --r:10px; --r2:14px;
-  --sh:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -8px rgba(0,0,0,.5);
+  --bg:#f3f6f9;--bg2:#122439;--panel:#fff;--panel2:#f6f9fc;--line:#e1e8ef;
+  --fg:#172c40;--fg2:#536a80;--dim:#6b7d90;--accent:#07877e;--accent2:#066b65;
+  --ok:#07877e;--warn:#b86e0b;--err:#d44842;--hit:#d44842;--purple:#237b97;
+  --r:10px;--r2:16px;--sh:0 4px 20px rgba(24,48,73,.035)
 }
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);
-  font:14px/1.6 "Microsoft YaHei","PingFang SC",system-ui,-apple-system,sans-serif;
-  -webkit-font-smoothing:antialiased}
-
-/* 顶栏 */
-header{height:58px;padding:0 22px;display:flex;align-items:center;gap:14px;
-  background:linear-gradient(180deg,#131824,#0f131c);
-  border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
-.logo{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px}
-.logo .mark{width:26px;height:26px;border-radius:7px;
-  background:linear-gradient(135deg,var(--accent),var(--purple));
-  display:grid;place-items:center;font-size:14px}
-.logo .sub{font-size:11px;color:var(--dim);font-weight:400;margin-left:6px}
-.spacer{flex:1}
-.chip{font-size:11.5px;padding:4px 11px;border-radius:999px;background:var(--panel2);
-  border:1px solid var(--line);color:var(--fg2);display:inline-flex;align-items:center;
-  gap:6px;white-space:nowrap}
-.chip .dot{width:6px;height:6px;border-radius:50%;background:var(--dim)}
-.chip.ok{color:#86efac;border-color:#1d4030;background:#0f1f19}
-.chip.ok .dot{background:var(--ok);box-shadow:0 0 8px var(--ok)}
-.chip.err{color:#fca5a5;border-color:#4a1f22;background:#1e1213}
-.chip.err .dot{background:var(--err)}
-.chip.warn{color:#fcd34d;border-color:#4a3a16;background:#1e1a0f}
-.chip.warn .dot{background:var(--warn)}
-
-/* 侧栏 + 内容 */
-.shell{display:flex;min-height:calc(100vh - 58px)}
-aside{width:196px;flex:0 0 196px;background:var(--bg2);border-right:1px solid var(--line);
-  padding:14px 10px;position:sticky;top:58px;height:calc(100vh - 58px);overflow:auto}
-aside button{display:flex;align-items:center;gap:10px;width:100%;background:none;border:none;
-  color:var(--fg2);padding:9px 12px;border-radius:8px;cursor:pointer;font-size:13.5px;
-  text-align:left;margin-bottom:3px;transition:.14s}
-aside button:hover{background:var(--panel2);color:var(--fg)}
-aside button.active{background:linear-gradient(90deg,rgba(59,130,246,.16),rgba(59,130,246,.04));
-  color:#fff;box-shadow:inset 2px 0 0 var(--accent)}
-aside button .ic{width:17px;text-align:center}
-aside .grp{font-size:10.5px;color:var(--dim);padding:14px 12px 6px;letter-spacing:.8px}
-main{flex:1;min-width:0;padding:20px 24px 64px;max-width:1320px}
-
-/* 卡片 */
-.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r2);
-  padding:18px 20px;margin-bottom:16px;box-shadow:var(--sh)}
-.card h3{margin:0 0 4px;font-size:14.5px;font-weight:600;display:flex;align-items:center;gap:8px}
-.card h3 .hint{font-size:12px;color:var(--dim);font-weight:400}
-.card > p.lead{margin:0 0 14px;color:var(--fg2);font-size:13px}
-.grid{display:grid;gap:16px}
-.g2{grid-template-columns:1fr 1fr}
-.g-2-1{grid-template-columns:1.6fr 1fr}
-@media(max-width:1080px){.g2,.g-2-1{grid-template-columns:1fr}}
-
-/* 控件 */
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-.btn{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px 17px;
-  cursor:pointer;font-size:13px;font-weight:500;transition:.14s;white-space:nowrap}
-.btn:hover{background:var(--accent2)}
-.btn:disabled{opacity:.4;cursor:not-allowed}
-.btn.ghost{background:var(--panel2);border:1px solid var(--line);color:var(--fg)}
-.btn.ghost:hover{background:#232b3a}
-.btn.lg{padding:11px 22px;font-size:14px}
-.btn.sm{padding:5px 12px;font-size:12px;border-radius:6px}
-input[type=text],select,textarea{background:#0d1117;color:var(--fg);border:1px solid var(--line);
-  border-radius:8px;padding:9px 12px;font-size:13px;font-family:inherit;transition:.14s}
-input[type=text]:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
-  box-shadow:0 0 0 3px rgba(59,130,246,.14)}
-input[type=text]::placeholder{color:var(--dim)}
-label.f{display:flex;flex-direction:column;gap:5px;font-size:11.5px;color:var(--dim)}
-label.f input{width:100%}
-label.inline{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--fg2)}
-label.inline input{width:62px}
-pre{background:#0a0d13;border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;
-  overflow:auto;font:12px/1.6 Consolas,"Courier New",monospace;color:var(--fg2);
-  max-height:300px;margin:0;white-space:pre-wrap;word-break:break-word}
-code{background:var(--panel2);padding:1px 6px;border-radius:5px;font-size:12px;color:var(--accent2)}
-.muted{color:var(--dim)}
-
-/* 指标 */
-.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:12px}
-.metric{background:var(--panel2);border:1px solid var(--line);border-radius:var(--r);padding:13px 15px}
-.metric .k{font-size:11px;color:var(--dim);letter-spacing:.4px;margin-bottom:3px}
-.metric .v{font-size:22px;font-weight:600;line-height:1.2;font-variant-numeric:tabular-nums}
-.metric .v.sm{font-size:15px;font-weight:500}
-
-/* 进度 */
-.bar{height:6px;background:#0d1117;border-radius:999px;overflow:hidden;margin:12px 0 7px}
-.bar > i{display:block;height:100%;width:0;border-radius:999px;
-  background:linear-gradient(90deg,var(--accent),var(--purple));transition:width .4s ease}
-
-/* 动作卡片 */
-.feed{display:flex;flex-direction:column;gap:10px;max-height:660px;overflow:auto;padding-right:4px}
-.act{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--accent);
-  border-radius:0 var(--r) var(--r) 0;padding:12px 14px;animation:slide .28s ease}
-.act.hit{border-left-color:var(--hit);background:#1d1416}
-.act .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;
-  color:var(--dim);margin-bottom:8px}
-.act .top .t{color:var(--fg2);font-weight:600;font-variant-numeric:tabular-nums}
-.person{display:flex;gap:9px;align-items:flex-start;padding:7px 0;border-top:1px dashed var(--line)}
-.person:first-of-type{border-top:none}
-.person .pin{flex:0 0 auto;width:20px;height:20px;border-radius:50%;background:var(--accent);
-  color:#fff;font-size:11px;display:grid;place-items:center;font-weight:600;margin-top:1px}
-.person .body{min-width:0}
-.person .where{font-size:11.5px;color:var(--dim)}
-.person .doing{font-size:13.5px;color:var(--fg)}
-.person .chg{font-size:11.5px;color:var(--accent2);margin-top:1px}
-.tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-left:6px;
-  background:#3a2020;color:#ff9d95}
-.tag.sev-high{background:#4a1a1a;color:#ff8a80}
-.tag.sev-medium{background:#40371a;color:#e3c05c}
-.tag.sev-low{background:#1f3a2a;color:#86efac}
-.thumb{width:96px;height:54px;object-fit:cover;border-radius:6px;border:1px solid var(--line);
-  cursor:pointer;transition:.14s;flex:0 0 auto}
-.thumb:hover{border-color:var(--accent)}
-.thumb.big{width:100%;height:auto;max-height:420px}
-
-/* 告警 */
-.alert{background:#1d1416;border:1px solid #4a2024;border-radius:var(--r);padding:13px 15px;
-  margin-bottom:10px;animation:slide .28s ease}
-.alert .t{font-weight:600;color:#ff9d95;margin-bottom:4px;display:flex;align-items:center;gap:8px}
-.alert .meta{font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
-.alert .reason{font-size:12.5px;color:var(--accent2);margin-top:7px;
-  background:rgba(59,130,246,.08);padding:7px 10px;border-radius:6px}
-.alert .ev{font-size:12px;color:var(--fg2);margin-top:5px;padding-left:2px}
-
-/* 上传 */
-.drop{border:2px dashed var(--line);border-radius:var(--r2);padding:36px 20px;text-align:center;
-  color:var(--dim);cursor:pointer;transition:.16s;background:#0d1117}
-.drop:hover,.drop.over{border-color:var(--accent);color:var(--fg);background:#101725}
-
-/* 提示 */
-.flashes{position:fixed;right:20px;bottom:20px;z-index:99;display:flex;flex-direction:column;gap:9px}
-.flash{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--accent);
-  padding:11px 16px;border-radius:var(--r);font-size:13px;max-width:400px;box-shadow:var(--sh);
-  animation:slide .22s ease}
-.flash.err{border-left-color:var(--err)}.flash.ok{border-left-color:var(--ok)}
-.flash.warn{border-left-color:var(--warn)}
-/* 勾选项（模拟验证这类"不影响主流程但要知道"的开关） */
-label.chk{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--dim);
-  cursor:pointer;user-select:none;padding:0 2px}
-label.chk input{width:15px;height:15px;accent-color:var(--accent);cursor:pointer}
-label.chk:hover{color:var(--fg)}
-/* 成本横幅：孤儿作业 / 自动释放。红=还在烧钱，黄=已自动释放 */
-.costbar{margin-bottom:16px;padding:13px 16px;border-radius:var(--r);font-size:13px;
-  background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.35);
-  display:flex;flex-direction:column;gap:9px;line-height:1.7}
-.costbar.danger{background:rgba(239,68,68,.11);border-color:rgba(239,68,68,.4)}
-.costbar b{color:var(--fg)}
-/* 实时画面：画中画式黑底显示，未开始时给出说明而不是一片空白 */
-.livebox{position:relative;background:#07090d;border:1px solid var(--line);
-  border-radius:var(--r);min-height:190px;display:flex;align-items:center;
-  justify-content:center;overflow:hidden}
-.livebox img{display:none;width:100%;height:auto;cursor:zoom-in}
-.livebox img.big{position:fixed;inset:5vh 5vw;width:90vw;height:90vh;object-fit:contain;
-  z-index:120;background:#000;border:1px solid var(--line);border-radius:var(--r);cursor:zoom-out}
-.livebox .ph{color:var(--dim);font-size:12.5px;line-height:1.7;padding:26px;text-align:center}
-/* 模型判定帧：小图，边框标出"这是 AI 看到的" */
-img.evid{width:100%;border:1px solid var(--line);border-radius:var(--r);background:#07090d;
-  cursor:zoom-in;display:block}
-img.evid.big{position:fixed;inset:5vh 5vw;width:90vw;height:90vh;object-fit:contain;
-  z-index:120;background:#000;cursor:zoom-out}
-@keyframes slide{from{opacity:0;transform:translateX(14px)}}
-section{display:none}section.active{display:block;animation:fade .2s ease}
-@keyframes fade{from{opacity:0;transform:translateY(4px)}}
-.note{background:rgba(59,130,246,.07);border:1px solid rgba(59,130,246,.2);border-radius:var(--r);
-  padding:11px 14px;font-size:12.5px;color:var(--fg2);line-height:1.75}
-.note.warn{background:rgba(245,158,11,.07);border-color:rgba(245,158,11,.22)}
-.kv{font-size:12.5px;color:var(--dim);line-height:1.95}
-.kv b{color:var(--fg);font-weight:500}
-::-webkit-scrollbar{width:9px;height:9px}
-::-webkit-scrollbar-thumb{background:#2a3346;border-radius:5px}
-::-webkit-scrollbar-thumb:hover{background:#374256}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.65 "Microsoft YaHei","PingFang SC",system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font-family:inherit}button{touch-action:manipulation}
+button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:3px solid #1daba0;outline-offset:4px}
+header{height:76px;padding:0 32px;display:flex;align-items:center;gap:12px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+.logo{display:flex;align-items:center;gap:12px;font-size:21px;font-weight:700;letter-spacing:.8px}.logo .mark{width:39px;height:39px;border-radius:12px;background:var(--accent);color:#fff;display:grid;place-items:center}.logo .mark svg{width:24px;height:24px}.logo .sub{display:block;font-size:10px;color:var(--dim);font-weight:500;letter-spacing:1.7px;margin-top:-4px}
+.spacer{flex:1}.top-label{font-size:12px;color:var(--dim);margin-right:8px}
+.chip{font-size:11.5px;padding:5px 11px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);color:var(--fg2);display:inline-flex;align-items:center;gap:6px;white-space:nowrap}.chip .dot{width:6px;height:6px;border-radius:50%;background:#a0afbd}.chip.ok{color:#05776f;border-color:#bfe4dc;background:#edf8f4}.chip.ok .dot{background:var(--ok)}.chip.err{color:#bd3e37;border-color:#f2d0cb;background:#fff3f1}.chip.err .dot{background:var(--err)}.chip.warn{color:#9d6311;border-color:#f0dfbe;background:#fff8ec}.chip.warn .dot{background:#d79a33}
+.shell{display:flex;min-height:calc(100vh - 76px)}aside{width:218px;flex:0 0 218px;background:var(--bg2);padding:26px 14px;position:sticky;top:76px;height:calc(100vh - 76px);overflow:auto;display:flex;flex-direction:column}
+aside button{display:flex;align-items:center;gap:12px;width:100%;background:none;border:1px solid transparent;color:#a4b6c7;padding:12px 14px;border-radius:10px;cursor:pointer;font-size:13px;text-align:left;margin-bottom:5px;transition:.16s}aside button:hover{background:#1d354c;color:#fff}aside button.active{background:#0b6f70;border-color:#16888a;color:#fff;box-shadow:0 5px 14px #081c2940}aside button .ic{width:18px;height:18px;display:grid;place-items:center}aside svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}aside .grp{font-size:10px;color:#71899e;padding:12px 14px 10px;letter-spacing:1.8px}.aside-foot{margin-top:auto;padding:30px 14px 0;color:#8197aa;font-size:11px}.aside-foot strong{color:#b7c9d9;font-weight:500;display:block;margin-bottom:4px}.aside-foot .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#26b8a9;margin-right:7px}
+main{flex:1;min-width:0;padding:28px 32px 56px;max-width:1760px;margin:0 auto}.page-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:23px}.page-heading h1{font-size:25px;line-height:1.4;letter-spacing:-.6px;margin:2px 0 5px;font-weight:700}.page-heading p{margin:0;color:var(--fg2);font-size:12.5px}.eyebrow{font-size:10px;letter-spacing:1.6px;color:var(--accent);font-weight:700}.heading-badge{display:flex;align-items:center;gap:7px;padding:8px 12px;background:#e6f4ef;border:1px solid #d3e9e2;border-radius:9px;color:#187a68;font-size:11px;margin-top:9px}.heading-badge .dot{width:6px;height:6px;background:var(--accent);border-radius:50%}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r2);padding:21px 23px;margin-bottom:18px;box-shadow:var(--sh)}.card h3{margin:0 0 7px;font-size:14px;font-weight:650;display:flex;align-items:center;gap:9px;flex-wrap:wrap}.card h3 .hint{font-size:11px;color:var(--dim);font-weight:400}.card>p.lead{margin:0 0 17px;color:var(--fg2);font-size:12.5px}.card-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.card-head h3{margin:0}.card-num{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums}.grid{display:grid;gap:20px}.g2{grid-template-columns:1fr 1fr}.g-2-1{grid-template-columns:minmax(0,1.7fr) minmax(285px,1fr)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.btn{background:var(--accent);color:#fff;border:1px solid transparent;border-radius:9px;padding:9px 17px;cursor:pointer;font-size:12.5px;font-weight:500;transition:.16s;white-space:nowrap}.btn:hover{background:var(--accent2);box-shadow:0 3px 9px #07877e18}.btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}.btn.ghost{background:#fff;border:1px solid var(--line);color:var(--fg2)}.btn.ghost:hover{background:#f4f7fa;border-color:#c4d3dc}.btn.lg{padding:11px 22px;font-size:13px}.btn.sm{padding:5px 11px;font-size:11px;border-radius:7px}.btn.danger{color:#bf4c43;border-color:#edd4cf}
+input[type=text],input[type=number],select,textarea{background:#f9fbfd;color:var(--fg);border:1px solid #dbe4ec;border-radius:8px;padding:9px 12px;font-size:12.5px;transition:.16s;min-width:0}input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px #07877e1c}input::placeholder{color:#91a1af}label.f{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim)}label.f input{width:100%}label.inline{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--fg2)}label.inline input{width:68px}label.chk{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--fg2);cursor:pointer;user-select:none;padding:0 2px}label.chk input{width:15px;height:15px;accent-color:var(--accent);cursor:pointer}.control-divider{width:1px;height:30px;background:var(--line);margin:0 4px}.source-label{display:block;color:var(--fg2);font-size:11px;margin-bottom:6px}.source-controls{display:flex;gap:10px}.source-controls input{flex:1;width:100%}
+pre{background:#122439;border:1px solid #1f3a51;border-radius:var(--r);padding:16px;overflow:auto;font:12px/1.7 Consolas,"Courier New",monospace;color:#ccdae6;max-height:340px;margin:0;white-space:pre-wrap;word-break:break-word}code{background:#edf4f5;padding:1px 5px;border-radius:4px;font-size:11px;color:var(--accent2)}.muted{color:var(--dim)}.kv{font-size:12px;color:var(--fg2);line-height:1.9}.kv b{color:var(--fg);font-weight:500}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}.metric{background:#f7fafc;border:1px solid #e7eef3;border-radius:var(--r);padding:15px 14px}.metric .k{font-size:10.5px;color:var(--dim);margin-bottom:7px}.metric .v{font-size:26px;font-weight:650;line-height:1.2;font-variant-numeric:tabular-nums}.metric .v.sm{font-size:16px;font-weight:550}.metric:last-child{background:#edf8f4;border-color:#d7ebe4}.metric:last-child .v{color:var(--accent)}
+.bar{height:4px;background:#eef3f7;border-radius:999px;overflow:hidden;margin:17px 0 9px}.bar>i{display:block;height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,#07877e,#42bfb0);transition:width .4s ease}.feed{display:flex;flex-direction:column;gap:12px;max-height:660px;overflow:auto;padding-right:3px}.act{background:#fafcfe;border:1px solid var(--line);border-radius:12px;padding:15px;animation:slide .24s ease}.act.hit{border-color:#eecbc5;background:#fffaf9}.act .top{display:flex;align-items:center;gap:9px;flex-wrap:wrap;font-size:10.5px;color:var(--dim);margin-bottom:11px}.act .top .t{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}.person{display:flex;gap:9px;align-items:flex-start;padding:8px 0;border-top:1px dashed var(--line)}.person:first-of-type{border-top:none}.person .pin{flex:0 0 auto;width:21px;height:21px;border-radius:7px;background:#e2f1ef;color:var(--accent);font-size:10px;display:grid;place-items:center;font-weight:600;margin-top:1px}.person .body{min-width:0}.person .where{font-size:10.5px;color:var(--dim)}.person .doing{font-size:12.5px;color:var(--fg)}.person .chg{font-size:11px;color:var(--accent);margin-top:2px}.tag{display:inline-flex;align-items:center;font-size:10px;padding:2px 8px;border-radius:5px;margin-left:0;background:#fff0ed;color:#be4c41}.tag.sev-high{background:#fde9e5;color:#bb4238}.tag.sev-medium{background:#fff3d9;color:#a36b12}.tag.sev-low{background:#e4f3e9;color:#358454}.tag.risk-source{background:#e8f1fa;color:#3e7099}.tag.rule-source{background:#e7f4ee;color:#238264}.thumb{width:108px;height:68px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:zoom-in;transition:.16s;flex:0 0 auto}.thumb:hover{border-color:var(--accent)}.scene-desc{font-size:12.5px;margin-bottom:7px;line-height:1.8}.risk-detail{margin-top:10px;padding:10px 12px;border-radius:8px;background:#edf5fa;border:1px solid #dfebf2;font-size:11.5px}.risk-detail strong{font-weight:600;color:#325c79}.risk-detail .risk-evidence{margin-top:5px;color:var(--fg2)}
+.alert{background:#fff;border:1px solid #eadedb;border-left:3px solid #d7953c;border-radius:10px;padding:14px;margin-bottom:10px;animation:slide .24s ease}.alert.high{border-left-color:var(--err)}.alert.low{border-left-color:#54a678}.alert .t{font-weight:600;font-size:12.5px;color:var(--fg);margin-bottom:7px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}.alert .meta{font-size:10.5px;color:var(--dim);font-variant-numeric:tabular-nums}.alert .reason{font-size:11.5px;color:#47667d;margin-top:9px;background:#f3f7fa;padding:8px 10px;border-radius:6px;line-height:1.75}.alert .ev{font-size:11px;color:var(--fg2);margin-top:6px}.alert-tools{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-bottom:12px}.alert-tools select{flex:1;min-width:88px;padding:7px 9px;font-size:11px}.alert-foot{color:var(--dim);font-size:10.5px;margin-bottom:12px}.alert-list{max-height:610px;overflow:auto;padding-right:2px}.drop{border:1.5px dashed #c7d8df;border-radius:var(--r2);padding:42px 20px;text-align:center;color:var(--fg2);cursor:pointer;transition:.16s;background:#f7fbfc}.drop:hover,.drop.over{border-color:var(--accent);background:#eef9f5}.upload-glyph{width:54px;height:54px;border-radius:15px;background:#e7f2f0;color:var(--accent);display:grid;place-items:center;margin:0 auto;font-size:26px}
+.flashes{position:fixed;right:22px;bottom:22px;z-index:150;display:flex;flex-direction:column;gap:9px}.flash{background:#fff;border:1px solid var(--line);border-left:3px solid var(--accent);padding:12px 17px;border-radius:10px;font-size:12px;max-width:420px;box-shadow:0 7px 30px #16304518;animation:slide .22s ease}.flash.err{border-left-color:var(--err)}.flash.ok{border-left-color:var(--ok)}.flash.warn{border-left-color:#d99b32}.costbar{margin-bottom:20px;padding:14px 17px;border-radius:12px;font-size:12px;background:#fff8e8;border:1px solid #eadab4;display:flex;flex-direction:column;gap:9px;line-height:1.8}.costbar.danger{background:#fff0ed;border-color:#eac5bd}.costbar b{color:var(--fg)}
+.livebox{position:relative;background:linear-gradient(145deg,#132d40,#0b1a28);border:1px solid #243f51;border-radius:12px;aspect-ratio:16/9;min-height:230px;display:flex;align-items:center;justify-content:center;overflow:hidden}.livebox img{display:none;width:100%;height:100%;object-fit:contain;cursor:zoom-in}.livebox:after{content:'LIVE VIEW';position:absolute;top:13px;left:14px;color:#6e8ca0;letter-spacing:1.9px;font-size:8px;pointer-events:none}.livebox .ph{color:#8eabba;font-size:12px;line-height:1.9;padding:28px;text-align:center}.livebox .ph strong{color:#d0e0e9;display:block;font-size:13px;font-weight:500;margin-bottom:7px}.preview-symbol{width:54px;height:54px;margin:0 auto 16px;border:1px solid #446274;border-radius:15px;display:grid;place-items:center;color:#84a8b7}.preview-symbol svg{width:25px;height:25px;fill:none;stroke:currentColor;stroke-width:1.5}.evidence-row{display:flex;gap:15px;align-items:flex-start;margin-top:16px}.evidence-image{flex:0 0 168px}.evidence-caption{font-size:10px;color:var(--dim);margin-bottom:5px}.evidence-copy{flex:1;min-width:0;padding-top:2px}.evidence-copy .muted{font-size:11px;line-height:1.8}img.evid{width:100%;min-height:92px;object-fit:contain;border:1px solid var(--line);border-radius:8px;background:#edf3f7;cursor:zoom-in;display:block}img.evid:not([src]){display:none}.empty-state{padding:31px 15px;text-align:center;color:var(--dim);font-size:11.5px;line-height:1.9}.empty-state strong{display:block;color:var(--fg2);font-size:12.5px;font-weight:500;margin:8px 0 3px}.empty-glyph{width:38px;height:38px;border:1px solid #d6e2e9;border-radius:11px;display:grid;place-items:center;margin:auto;color:#8ea7b6;font-size:17px}.note{background:#eef6f8;border:1px solid #daeaef;border-radius:9px;padding:11px 13px;font-size:11.5px;color:var(--fg2);line-height:1.8}.note.warn{background:#fff9ed;border-color:#efe3ca}.help-panel{font-size:11px;color:var(--dim);margin-top:14px}.help-panel summary{cursor:pointer;color:var(--fg2);width:fit-content}.help-panel p{margin:9px 0 0;line-height:1.8}.help-panel code{font-size:10.5px}.policy-note{border-top:1px solid var(--line);padding-top:13px;margin-top:16px;color:var(--fg2);font-size:11.5px;line-height:1.85}.connection-warning{margin-bottom:18px}section{display:none}section.active{display:block;animation:fade .2s ease}::-webkit-scrollbar{width:7px;height:7px}::-webkit-scrollbar-thumb{background:#cbd7df;border-radius:5px}::-webkit-scrollbar-thumb:hover{background:#a9bcc8}
+@keyframes slide{from{opacity:0;transform:translateY(5px)}}@keyframes fade{from{opacity:0;transform:translateY(4px)}}
+.image-viewer{width:calc(100vw - 32px);height:calc(100vh - 32px);height:calc(100dvh - 32px);max-width:none;max-height:none;margin:auto;padding:14px;border:1px solid #456073;border-radius:14px;background:#07121d;color:#e9f1f7;overflow:hidden}
+.image-viewer[open]{display:grid;grid-template-rows:auto minmax(0,1fr);gap:12px}.image-viewer::backdrop{background:#03101bdd;backdrop-filter:blur(3px)}.image-viewer-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;min-width:0}.image-viewer-title{font-size:12px;min-width:0;overflow-wrap:anywhere}.image-viewer .btn{flex:0 0 auto;background:#173547;border-color:#456073;color:#e9f1f7}.image-viewer img{display:block;width:100%;height:100%;min-width:0;min-height:0;object-fit:contain;cursor:zoom-out}.image-viewer-open{overflow:hidden}.evidence-review{margin-bottom:10px;padding:9px 11px;border:1px solid #eddfbb;border-radius:8px;background:#fff8e9;color:#916017;font-size:11.5px}.evidence-review strong{display:block}.evidence-review ul{margin:5px 0 0;padding-left:18px}.raw-description-label{margin-bottom:5px;color:#916017;font-size:10.5px}
+@media(min-width:1700px){main{padding-left:44px;padding-right:44px}.g-2-1{grid-template-columns:minmax(0,1.85fr) minmax(340px,1fr)}}
+@media(max-width:1160px){aside{width:184px;flex-basis:184px}main{padding:24px 22px}.g-2-1{grid-template-columns:minmax(0,1.4fr) minmax(268px,1fr)}.card{padding:18px}.top-label{display:none}.metrics{grid-template-columns:1fr 1fr}.evidence-image{flex-basis:132px}.evidence-copy .muted{font-size:10.5px}.control-divider{display:none}}
+@media(max-width:980px){.g2,.g-2-1{grid-template-columns:1fr}.monitor-side{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start}.monitor-side .card{margin:0}.top-label,.logo .sub{display:none}header{padding:0 22px}.chip{font-size:10px;padding:4px 8px}.page-heading h1{font-size:23px}}
+@media(max-width:700px){header{height:auto;min-height:68px;padding:12px 16px;flex-wrap:wrap;gap:6px}.logo{font-size:19px;margin-right:auto}.logo .mark{width:32px;height:32px}.spacer{display:none}header .chip{padding:4px 7px;font-size:9px}.shell{display:block}aside{position:sticky;top:0;height:auto;width:100%;padding:8px;z-index:19;flex-direction:row;overflow-x:auto;gap:4px}aside .grp,.aside-foot{display:none}aside button{flex:0 0 auto;width:auto;padding:9px 10px;margin:0;font-size:11px;gap:6px}aside button .ic,aside svg{width:14px;height:14px}main{padding:20px 14px 36px}.page-heading{gap:10px;margin-bottom:18px}.page-heading h1{font-size:22px}.page-heading p{font-size:11px}.heading-badge{display:none}.card{padding:17px 15px;border-radius:13px}.monitor-side{display:block}.monitor-side .card{margin-bottom:18px}.source-controls{flex-wrap:wrap}.source-controls input{flex:1 0 100%;min-width:0!important}.source-controls .btn{flex:1}.row{gap:9px}.row>select{min-width:0!important;max-width:100%}.control-divider{display:none}.evidence-row{gap:12px}.evidence-image{flex-basis:110px}.evidence-copy .muted{font-size:10px}.livebox{min-height:190px}.act{padding:12px}.thumb{width:80px;height:58px}.alert-tools .btn{padding-left:9px;padding-right:9px}.flashes{right:14px;bottom:14px;left:14px}.flash{max-width:none}.metrics{grid-template-columns:repeat(2,1fr)}.card-head{align-items:flex-start}.card h3{font-size:13px}.eyebrow{font-size:9px}#yaml-box{min-height:260px!important}#agg-mode{width:100%}.drop{padding:30px 14px}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+/* Only animate colors: responsive layout changes should settle immediately. */
+aside button,.btn{transition:background-color .16s,color .16s,border-color .16s,box-shadow .16s}
+input,select,textarea{transition:border-color .16s,box-shadow .16s}
+@media(max-width:700px){aside button{white-space:nowrap;min-width:max-content}.source-controls input{width:100%}}
+@media(max-width:980px){.g-2-1{display:flex;flex-direction:column}.g-2-1>div:first-child{display:contents}.g-2-1>div:first-child>.card:last-child{order:2}.monitor-side{order:1}.metric:last-child{grid-column:1/-1}}
 </style>
 </head>
 <body>
 
 <header>
   <div class="logo">
-    <span class="mark">🛡</span>
-    <span>智巡<span class="sub">视频行为分析平台</span></span>
+    <span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3 20 6v6c0 5-8 9-8 9s-8-4-8-9V6z"/><path d="m8 12 3 3 5-6"/></svg></span>
+    <span>智巡<span class="sub">VISION INTELLIGENCE</span></span>
   </div>
-  <span class="spacer"></span>
+  <span class="spacer"></span><span class="top-label">视频行为分析平台</span>
   <span class="chip" id="c-vpn"><i class="dot"></i>集群未检测</span>
   <span class="chip" id="c-svc"><i class="dot"></i>模型未启动</span>
   <span class="chip" id="c-mode"><i class="dot"></i>告警 —</span>
 </header>
 
 <div class="shell">
-<aside>
+<aside aria-label="主导航">
   <div class="grp">分析</div>
-  <button class="active" data-tab="monitor"><span class="ic">📹</span>摄像头监测</button>
-  <button data-tab="detect"><span class="ic">🎞</span>视频文件分析</button>
+  <button class="active" data-tab="monitor"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="13" height="14" rx="3"/><path d="m16 9 5-3v12l-5-3"/></svg></span>摄像头监测</button>
+  <button data-tab="detect"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m10 8 5 4-5 4z"/></svg></span>视频文件分析</button>
+  <button data-tab="qa"><span class="ic" aria-hidden="true">?</span>视频问答</button>
   <div class="grp">配置</div>
-  <button data-tab="service"><span class="ic">⚡</span>推理服务</button>
-  <button data-tab="behaviors"><span class="ic">📋</span>行为定义</button>
-  <button data-tab="cluster"><span class="ic">🖥</span>集群状态</button>
+  <button data-tab="service"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m13 2-8 12h7l-1 8 8-12h-7z"/></svg></span>推理服务</button>
+  <button data-tab="behaviors"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3"/><rect x="9" y="2" width="6" height="5" rx="1"/><path d="M8 12h8M8 16h5"/></svg></span>行为定义</button>
+  <button data-tab="cluster"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4M7 9h3M7 12h6"/></svg></span>集群状态</button>
+  <div class="aside-foot"><strong><i class="dot"></i>可解释的视频分析</strong>规则识别 · 开放风险判断<br>每条告警，查看画面与依据</div>
 </aside>
 
-<main>
+<main id="main-content">
 <!-- 成本守卫横幅：孤儿作业 / 自动释放提示 -->
+<div id="connection-note" class="note warn connection-warning" role="status" style="display:none"></div>
+<div id="runtime-note" class="note warn" role="alert" style="display:none;margin:12px 0"></div>
 <div id="cost-bar" style="display:none"></div>
+<div class="card" style="padding:12px 18px;margin-bottom:18px">
+  <div class="row"><label class="chk"><input type="checkbox" id="speech-enabled" checked> 告警语音播报</label>
+    <label for="speech-volume">音量</label><input id="speech-volume" type="range" min="0" max="1" step="0.1" value="1" style="width:100px">
+    <button class="btn ghost sm" id="speech-test">试听音箱</button><span id="speech-status" class="muted" role="status">开始检测或试听后启用，使用当前浏览器的音箱</span>
+  </div>
+</div>
+<section id="tab-qa">
+  <div class="page-heading"><div><div class="eyebrow">VIDEO QUESTIONS</div><h1>视频问答</h1><p>选择已分析的视频，询问画面、动作或发生时间，查看大模型引用的证据。</p></div></div>
+  <div class="card">
+    <h3>已分析视频</h3><div class="row"><select id="qa-video" aria-label="选择已分析视频" style="min-width:220px;max-width:100%"><option value="">正在读取分析记录…</option></select><button class="btn ghost sm" id="qa-refresh">刷新列表</button></div>
+    <div id="qa-video-info" class="muted" style="margin:10px 0">新完成的视频分析会保存为问答档案，重启后仍可选择。</div>
+    <video id="qa-player" controls preload="metadata" style="display:none;width:100%;max-height:360px;background:#102530"></video>
+    <label class="f" style="margin-top:14px" for="qa-question">提问内容<textarea id="qa-question" rows="3" maxlength="2000" placeholder="例如：哪一帧有人吸烟？他在什么时候丢弃了什么？"></textarea></label>
+    <div class="row" style="margin-top:12px"><button class="btn" id="qa-ask">向 AI 提问</button><span id="qa-status" class="muted" role="status"></span></div>
+    <p class="muted" style="margin-top:12px">问答使用已部署的大模型重新查看抽样画面；引用时间对应抽样帧，不能保证穷尽视频中的每个动作。请先启动推理服务。</p>
+  </div>
+  <div id="qa-answers" aria-live="polite"></div>
+</section>
 <!-- 摄像头监测 -->
 <section id="tab-monitor" class="active">
+  <div class="page-heading"><div><div class="eyebrow">LIVE MONITORING</div><h1>监测工作台</h1><p>接入摄像头，持续关注人物动作与现场风险。</p></div><div class="heading-badge"><i class="dot"></i>规则 + AI 风险双通道</div></div>
   <div class="card">
-    <h3>摄像头监测 <span class="hint">持续分析画面中的人在做什么，由 AI 指出动作</span></h3>
-    <p class="lead">
-      接入<b>本机摄像头</b>（填 <code>0</code>）或 <b>RTSP 网络摄像头</b>
-      （填 <code>rtsp://用户名:密码@IP:554/路径</code>）。
-      启动后系统持续采集画面，每个窗口由模型说明<b>每个人在做什么</b>、动作有何变化。
-    </p>
-    <div class="row">
-      <input type="text" id="m-src" value="0" placeholder="0 或 rtsp://..."
-             style="flex:1;min-width:260px">
+    <h3>连接视频源 <span class="hint">本机摄像头 / RTSP 网络摄像头</span></h3>
+    <p class="lead">AI 会识别配置中的行为，也会独立判断跌倒、冲突、烟火等画面可见风险，并提供告警理由。</p>
+    <label class="source-label" for="m-src">摄像头编号或视频流地址</label>
+    <div class="source-controls">
+      <input type="text" id="m-src" value="0" placeholder="输入摄像头编号（如 0）或 rtsp://..." autocomplete="off" spellcheck="false">
       <button class="btn ghost" id="m-probe">探测源</button>
       <button class="btn ghost" id="m-cams">找摄像头</button>
     </div>
     <div class="row" style="margin-top:12px">
-      <label class="f" style="width:108px">窗口步长（秒）
-        <input type="text" id="m-stride" value="2">
+      <label class="f" style="width:108px">分析间隔（秒）
+        <input type="number" id="m-stride" value="2" min="0.5" max="60" step="0.5">
       </label>
       <!-- ★ 实时性主旋钮。滞后 ≈ 攒批窗口数 × 窗口步长，而成本 ≈ 每窗均摊
            GPU 秒 —— 同一个旋钮决定两者，方向相反，所以让用户自己选，
@@ -236,12 +116,14 @@ section{display:none}section.active{display:block;animation:fade .2s ease}
       <label class="f" style="width:120px"
              title="一批攒够几个窗口才送去推理。攒得越少越实时（滞后≈这个数×窗口步长），攒得越多越省卡时。">
         攒批窗口数
-        <input type="text" id="m-batch" value="2">
+        <input type="number" id="m-batch" value="2" min="1" max="8" step="1">
       </label>
-      <button class="btn lg" id="m-start">▶ 开始监测</button>
-      <button class="btn ghost" id="m-stop" disabled>■ 停止</button>
+      <label class="f" style="width:118px" title="画面静止时仍定期重新送模型，避免持续风险被动作量门控遗漏">静止复检（秒）<input type="number" id="m-recheck" value="30" min="1" max="300" step="1"></label>
+      <button class="btn ghost sm" id="m-apply-live">应用节奏</button>
+      <button class="btn lg" id="m-start">开始监测</button>
+      <button class="btn ghost" id="m-stop" disabled>停止监测</button>
       <label class="chk" title="用本地假模型跑通链路，不需要 VPN、不花机时；结论会明确标注为演示数据">
-        <input type="checkbox" id="m-mock"> 演示模式（AI 结论是假的）
+        <input type="checkbox" id="m-mock"> 演示模式（模拟结论）
       </label>
       <select id="m-scene" title="演示模式下，让画面描述 / 动作 / 判定依据 / 告警互相自洽"
               style="font-size:12.5px;padding:5px 8px">
@@ -256,66 +138,45 @@ section{display:none}section.active{display:block;animation:fade .2s ease}
     <!-- 「开始监测」为什么按不动 —— 必须写出来。
          以前只把按钮置灰、什么都不说，用户对着一个点不动的按钮只能猜。 -->
     <div class="note warn" id="m-why" style="margin-top:12px;display:none"></div>
-    <div class="note" style="margin-top:12px">
-      <b>没有摄像头也能试：</b>本机没摄像头、也没连 VPN 时，
-      先用 <code>python tools/mini_rtsp_h264.py --h264 runs/_ref.h264 --port 8554</code>
-      起一个自建 RTSP 源（走的是和真实摄像头完全一样的拉流代码），
-      源填 <code>rtsp://127.0.0.1:8554/live</code>，勾上「模拟验证」即可看到完整监测过程。
-    </div>
     <div class="bar"><i id="m-bar"></i></div>
     <div class="kv" id="m-msg">未开始</div>
     <div class="note warn" id="m-warn" style="margin-top:10px;display:none"></div>
-    <div class="note warn" style="margin-top:14px">
-      <b>实时性由「攒批窗口数 × 窗口步长」决定，不是由推理速度决定。</b>
-      实测（2026-10-09）：每轮 16 秒里推理只占 7 秒，其余时间都在等画面把一批
-      窗口采齐 —— 所以 <b>滞后 ≈ 攒批窗口数 × 窗口步长</b>。<br>
-      默认「2 个 × 2 秒 ≈ 4 秒滞后」；而旧默认（8 个 × 2 秒 = 16 秒）正是
-      "人已经把动作做完了、结论才慢半拍出来"的原因。<br>
-      ⚠️ 把攒批调大可以省卡时，但**越攒越滞后**，且超过服务端批量上限
-      （默认 8）之后是纯亏。调小则更实时、每窗口更贵。<br>
-      ⚠️ 一个原理性下界：<b>一个窗口必须等它走完，才能知道那几秒里发生了什么</b>
-      —— 所以"实时"最多到 3 秒级，做不到 1 秒内出结论。
-    </div>
+    <details class="help-panel"><summary>分析节奏与告警范围</summary>
+      <p>分析间隔决定采样频率，攒批窗口数决定一次提交多少段画面。攒批越少越及时；越多通常越节省推理开销。当前采样与攒批等待量约为 <b id="m-delay-estimate">4 秒</b>，还需加上推理与传输时间。点击「应用节奏」后，持续监测在下一批使用新配置。</p>
+      <p>AI 风险独立于行为名单。告警仍需可见证据、置信度与去抖策略支持；模糊画面或模型无法确认的情况会保留在逐窗口详情中。演示模式只用于验证流程。</p>
+    </details>
   </div>
 
   <div class="grid g-2-1">
     <div>
       <div class="card">
-        <h3>实时画面 <span class="hint" id="m-live-hint">未开始</span></h3>
+        <div class="card-head"><h3>实时画面</h3><span class="chip" id="m-live-hint">待连接</span></div>
         <div class="livebox">
           <img id="m-live" alt="实时画面">
           <div class="ph" id="m-live-ph">
-            开始监测后，这里显示摄像头的实时画面（约 3 张/秒）。
-            下面那张才是<b>模型判断时看到的那一帧</b>。
+            <div class="preview-symbol" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="13" height="14" rx="3"/><path d="m16 9 5-3v12l-5-3"/></svg></div>
+            <strong>等待接入视频画面</strong>选择视频源并开始监测<br>实时预览与 AI 判定帧会同步呈现
           </div>
         </div>
-        <div class="row" style="margin-top:10px;align-items:flex-start;gap:12px;flex-wrap:nowrap">
-          <div style="flex:0 0 190px">
-            <div class="muted" style="font-size:11.5px;margin-bottom:5px">
-              模型判定帧（每 2 秒一张）
-            </div>
+        <div class="evidence-row">
+          <div class="evidence-image">
+            <div class="evidence-caption">AI 判定帧 · 点击查看</div>
             <img id="m-evidence" class="evid" alt="模型判定帧">
           </div>
-          <div style="flex:1;min-width:0">
-            <div class="muted" id="m-next" style="font-size:12.5px">
-              说明：<b>实时画面</b>是给人看的预览（流畅，可能比判定帧新几秒）；
-              <b>模型判定帧</b>是 AI 真正看到的画面，每 2 秒一张，最多滞后一个取样间隔。
-              两者分开显示，是为了让你能判断"AI 到底看的是什么"。
-            </div>
+          <div class="evidence-copy">
+            <div class="muted" id="m-next">实时画面用于观察现场，判定帧来自当前分析窗口。结合画面与文字依据，核查每一次 AI 判断。</div>
             <div class="muted" id="m-pace" style="font-size:12px;margin-top:6px"></div>
           </div>
         </div>
       </div>
       <div class="card">
-        <h3>AI 动作识别 <span class="hint">画面里每个人在做什么</span></h3>
-        <div class="feed" id="m-feed">
-          <span class="muted">开始监测后，这里会实时显示模型对每个人动作的描述。</span>
-        </div>
+        <div class="card-head"><h3>AI 观察记录 <span class="hint">人物动作 · 风险 · 可见证据</span></h3><span class="card-num">最近 60 个窗口</span></div>
+        <div class="feed" id="m-feed"><div class="empty-state"><div class="empty-glyph" aria-hidden="true">◎</div><strong>等待第一条观察记录</strong>开始监测后，AI 结论会逐条显示在这里。</div></div>
       </div>
     </div>
-    <div>
+    <div class="monitor-side">
       <div class="card">
-        <h3>实时指标</h3>
+        <div class="card-head"><h3>运行概览</h3><span class="card-num">本次监测</span></div>
         <div class="metrics">
           <div class="metric"><div class="k">已分析窗口</div><div class="v" id="mm-win">0</div></div>
           <div class="metric"><div class="k">单窗口耗时</div><div class="v sm" id="mm-lat">—</div></div>
@@ -325,8 +186,10 @@ section{display:none}section.active{display:block;animation:fade .2s ease}
         </div>
       </div>
       <div class="card">
-        <h3>告警</h3>
-        <div id="m-alerts"><span class="muted">暂无</span></div>
+        <div class="card-head"><h3>现场告警</h3><span class="card-num" id="m-alert-count">0 条</span></div>
+        <div class="alert-tools"><select id="m-alert-source" aria-label="筛选监测告警来源"><option value="all">全部来源</option><option value="ai_risk">AI 风险</option><option value="configured">配置行为</option></select><select id="m-alert-severity" aria-label="筛选监测告警严重度"><option value="all">全部等级</option><option value="high">高风险</option><option value="medium">中风险</option><option value="low">低风险</option></select><button class="btn ghost sm" id="m-alert-export" disabled>导出</button></div>
+        <div class="alert-foot">筛选仅影响展示。保留最近 500 条，导出当前筛选结果。</div>
+        <div class="alert-list" id="m-alerts"><div class="empty-state"><div class="empty-glyph" aria-hidden="true">✓</div><strong>暂无现场告警</strong>检测到需要关注的情况后，显示风险与判断依据。</div></div>
       </div>
     </div>
   </div>
@@ -334,10 +197,11 @@ section{display:none}section.active{display:block;animation:fade .2s ease}
 
 <!-- 视频文件 -->
 <section id="tab-detect">
+  <div class="page-heading"><div><div class="eyebrow">VIDEO ANALYSIS</div><h1>视频文件分析</h1><p>逐窗口还原现场，查看行为、风险与告警依据。</p></div><div class="heading-badge"><i class="dot"></i>规则 + AI 风险双通道</div></div>
   <div class="card">
     <h3>视频文件分析 <span class="hint">上传一段视频，逐窗口给出结论</span></h3>
-    <div class="drop" id="drop">
-      <div style="font-size:30px">📁</div>
+    <div class="drop" id="drop" role="button" tabindex="0" aria-label="选择或拖入视频文件">
+      <div class="upload-glyph" aria-hidden="true">↑</div>
       <div style="margin-top:10px;font-size:14px">点击选择视频，或拖拽文件到这里</div>
       <div class="muted" style="margin-top:6px;font-size:12.5px">
         支持 mp4 / avi / mkv / mov · 手机拍 30 秒即可
@@ -379,30 +243,34 @@ section{display:none}section.active{display:block;animation:fade .2s ease}
   </div>
 
   <div class="card">
-    <h3>告警判定策略 <span class="hint">改完立即生效，无需重启模型服务</span></h3>
+    <h3>告警判定策略 <span class="hint">持续监测下一批生效，无需重启模型</span></h3>
     <div class="row">
       <select id="agg-mode" style="min-width:300px">
         <option value="ai">AI 判断 —— 模型自己决定该不该报警，并给出理由</option>
         <option value="immediate">立即告警 —— 一判定命中就报，最快</option>
         <option value="smoothed">时序平滑 —— 多窗口都命中才报，误报最少</option>
       </select>
-      <label class="inline">去抖 <input type="text" id="agg-dedup" value="30"> 秒</label>
-      <label class="inline">置信度下限 <input type="text" id="agg-conf" value="0.45"></label>
+      <label class="inline">去抖 <input type="number" id="agg-dedup" value="30" min="0" max="3600" step="1"> 秒</label>
+      <label class="inline">置信度下限 <input type="number" id="agg-conf" value="0.45" min="0" max="1" step="0.05"></label>
+      <label class="chk"><input type="checkbox" id="agg-open-risks" checked> AI 开放风险告警</label>
       <button class="btn" id="btn-agg">应用</button>
     </div>
     <div class="kv" id="agg-msg" style="margin-top:11px">—</div>
     <div class="note" style="margin-top:13px">
       <b>AI 判断</b>：模型额外输出 <code>alert</code>（要不要报警）与
       <code>alert_reason</code>（理由），会区分「发生了」和「值得打扰人」。
-      模型未表态时回落到 <code>violation</code>，不会静默不报。<br>
+      配置行为未表态时回落到 <code>violation</code>。<br>
       <b>立即告警</b>：延迟最低，但单帧抖动会直接变误报。<br>
-      <b>时序平滑</b>：误报最少，但明显行为也要等第二个窗口。
+      <b>时序平滑</b>：需要多窗口一致支持，再升级为告警。<br>
+      <b>AI 开放风险</b>：三种策略下均需模型明确建议告警、达到置信度下限；时序平滑还需满足多窗口命中要求。关闭此项只保留配置行为告警。设置仅对本次服务进程生效。
     </div>
   </div>
 
   <div class="card">
-    <h3>告警 <span class="hint" id="alert-count"></span></h3>
-    <div id="alerts"><span class="muted">分析完成后显示</span></div>
+    <div class="card-head"><h3>分析告警 <span class="hint" id="alert-count">0 条</span></h3></div>
+    <div class="alert-tools"><select id="f-alert-source" aria-label="筛选视频告警来源"><option value="all">全部来源</option><option value="ai_risk">AI 风险</option><option value="configured">配置行为</option></select><select id="f-alert-severity" aria-label="筛选视频告警严重度"><option value="all">全部等级</option><option value="high">高风险</option><option value="medium">中风险</option><option value="low">低风险</option></select><button class="btn ghost sm" id="f-alert-export" disabled>导出当前告警</button></div>
+    <div class="alert-foot">AI 风险独立于行为名单。筛选仅影响展示；导出包含当前筛选结果。</div>
+    <div class="alert-list" id="alerts"><div class="empty-state"><div class="empty-glyph" aria-hidden="true">✓</div><strong>等待分析结果</strong>上传视频后，告警会随逐窗口分析实时更新。</div></div>
   </div>
 
   <div class="card">
@@ -413,6 +281,7 @@ section{display:none}section.active{display:block;animation:fade .2s ease}
 
 <!-- 推理服务 -->
 <section id="tab-service">
+  <div class="page-heading"><div><div class="eyebrow">INFERENCE SERVICE</div><h1>推理服务</h1><p>管理模型状态与资源使用，让分析随时就绪。</p></div></div>
   <div class="card">
     <h3>推理服务 <span class="hint">模型运行在同济 A800，经 SSH 隧道访问</span></h3>
     <p class="lead">
@@ -440,13 +309,16 @@ section{display:none}section.active{display:block;animation:fade .2s ease}
 
 <!-- 行为定义 -->
 <section id="tab-behaviors">
+  <div class="page-heading"><div><div class="eyebrow">BEHAVIOR RULES</div><h1>行为与风险</h1><p>定义重点关注的行为，AI 同时识别名单之外的现场风险。</p></div></div>
   <div class="card">
-    <h3>不文明行为定义 <span class="hint">加新行为不用改代码</span></h3>
+    <h3>重点行为定义 <span class="hint">保存后热更新</span></h3>
     <p class="lead">
       三条经验：① 只写「能看见什么」，不写「这合不合规矩」；
       ② <b>反例比正例更重要</b>，它是压制误报的主力；
-      ③ 保存后自动热推给计算节点上的模型，无需重启作业。
+      ③ 保存后，后续分析请求会携带新定义给模型，无需重启作业。
     </p>
+    <div class="note" style="margin-bottom:15px"><b>开放风险判断已独立运行</b>：无需在下方名单中逐项添加。这里的定义用于识别你特别关注的行为，AI 风险会额外判断现场可见、值得提醒的异常，并给出依据。</div>
+    <label class="source-label" for="yaml-box">行为配置（YAML）</label>
     <textarea id="yaml-box" spellcheck="false"
       style="width:100%;min-height:340px;font:12px/1.6 Consolas,monospace;resize:vertical"></textarea>
     <div class="row" style="margin-top:13px">
@@ -463,6 +335,7 @@ section{display:none}section.active{display:block;animation:fade .2s ease}
 
 <!-- 集群 -->
 <section id="tab-cluster">
+  <div class="page-heading"><div><div class="eyebrow">COMPUTE RESOURCES</div><h1>集群资源</h1><p>查看连接状态、计算资源和当前作业。</p></div></div>
   <div class="card">
     <h3>连接与资源</h3>
     <div class="row">
@@ -480,14 +353,67 @@ section{display:none}section.active{display:block;animation:fade .2s ease}
 </main>
 </div>
 
-<div class="flashes" id="flashes"></div>
+<dialog id="image-viewer" class="image-viewer" aria-labelledby="image-viewer-title">
+  <div class="image-viewer-toolbar"><span id="image-viewer-title" class="image-viewer-title">完整画面</span><button id="image-viewer-close" class="btn sm" type="button" autofocus>关闭 · Esc</button></div>
+  <img id="image-viewer-image" alt="">
+</dialog>
+<div class="flashes" id="flashes" role="status" aria-live="polite" aria-atomic="false"></div>
 
+<script src="/static/alert_speech.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 let es = null, currentJob = null, uploadedJob = null;
 let monJob = null, monEs = null, monLiveTimer = null, monNextTimer = null;
 let strideTouched = false;   // 用户手改过步长后，就不再被服务端配置覆盖
 let batchTouched = false;    // 攒批窗口数同理
+let recheckTouched = false;
+let monitorStarting = false, monitorRunning = false, fileRunning = false, uploading = false;
+let serviceReady = false, refreshBusy = false, stateFailed = false, liveViewToken = 0, restoringJobs = true;
+let runtimeOutdated = true;
+const alertStore = {monitor:[], file:[]};
+const severityLabels = {high:'高风险', medium:'中风险', low:'低风险'};
+let qaPending=false, qaVideos=[];
+const speech=new AlertSpeech({onStatus:text=>{$('#speech-status').textContent=text;}});
+const newSpeechRuns=new Set();
+try{$('#speech-enabled').checked=localStorage.getItem('civility-speech-enabled')!=='false';}catch(e){}
+if(!speech.supported){$('#speech-enabled').disabled=true;$('#speech-test').disabled=true;$('#speech-status').textContent='当前浏览器不支持语音播报，请使用 Edge 或 Chrome';}
+function armSpeech(){if($('#speech-enabled').checked&&!speech.enabled&&speech.enable(true))speech.test('语音告警已开启。');}
+$('#speech-enabled').onchange=()=>{try{localStorage.setItem('civility-speech-enabled',$('#speech-enabled').checked);}catch(e){}if($('#speech-enabled').checked)armSpeech();else speech.enable(false);};
+$('#speech-volume').oninput=()=>{speech.volume=Number($('#speech-volume').value);};
+$('#speech-test').onclick=()=>{if($('#speech-enabled').checked)speech.enable(true);speech.test();};
+function speakAlerts(jid,alerts,mon){speech.notify(jid,alerts,{demo:$(mon?'#m-mock':'#f-mock').checked,live:mon});}
+function speechHello(jid,alerts,mon){if(newSpeechRuns.delete(jid))speakAlerts(jid,alerts,mon);else speech.seed(jid,alerts);}
+function esc(value){
+  return String(value ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function confidenceText(value){
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.round(Math.max(0, Math.min(1,n))*100)+'%' : '—';
+}
+function emptyState(title, detail, symbol='◎'){
+  return `<div class="empty-state"><div class="empty-glyph" aria-hidden="true">${esc(symbol)}</div><strong>${esc(title)}</strong>${esc(detail)}</div>`;
+}
+function updateControls(){
+  $('#m-start').disabled = runtimeOutdated || restoringJobs || monitorStarting || monitorRunning || (!serviceReady && !$('#m-mock').checked);
+  $('#m-stop').disabled = !monitorRunning;
+  $('#m-src').disabled = monitorStarting || monitorRunning;
+  $('#m-probe').disabled = monitorStarting || monitorRunning;
+  $('#m-cams').disabled = monitorStarting || monitorRunning;
+  $('#btn-detect').disabled = runtimeOutdated || restoringJobs || uploading || fileRunning || !uploadedJob || (!serviceReady && !$('#f-mock').checked);
+  $('#btn-abort').disabled = !fileRunning;
+  $('#file').disabled = fileRunning || uploading;
+  $('#m-mock').disabled = monitorStarting || monitorRunning;
+  $('#f-mock').disabled = fileRunning;
+  $('#m-scene').disabled = monitorStarting || monitorRunning;
+  $('#f-scene').disabled = fileRunning;
+  $('#f-loop').disabled = fileRunning;
+  $('#qa-ask').disabled = qaPending || runtimeOutdated || !serviceReady || !$('#qa-video').value;
+  $('#qa-video').disabled=qaPending;$('#qa-refresh').disabled=qaPending;
+}
+function updateDelayEstimate(){
+  const delay = Number($('#m-stride').value)*Number($('#m-batch').value);
+  $('#m-delay-estimate').textContent = Number.isFinite(delay) && delay>0 ? `${delay.toFixed(1)} 秒` : '—';
+}
 
 function flash(msg, kind=''){
   const d = document.createElement('div');
@@ -495,77 +421,103 @@ function flash(msg, kind=''){
   $('#flashes').appendChild(d);
   setTimeout(()=>d.remove(), kind==='err'?9000:4200);
 }
-async function api(p, o){
-  const r = await fetch(p, o);
-  const t = await r.text();
-  let d; try{ d = JSON.parse(t); }catch(e){ d = {raw:t}; }
-  if(!r.ok) throw new Error(d.detail || d.error || ('HTTP ' + r.status));
-  return d;
+async function api(p, options={}){
+  if(runtimeOutdated && (p==='/api/service/start'||p==='/api/live/start'||p.startsWith('/api/detect/'))){
+    throw new Error('当前本机服务尚未加载新版识别规则，请在原终端重启网页服务并刷新页面');
+  }
+  const controller = new AbortController();
+  const {timeoutMs,...fetchOptions}=options;
+  const timer = setTimeout(()=>controller.abort(), timeoutMs || (options.body instanceof FormData ? 300000 : 60000));
+  try{
+    const r = await fetch(p, {...fetchOptions, signal:controller.signal});
+    const t = await r.text();
+    let d; try{ d = JSON.parse(t); }catch(e){ d = {raw:t}; }
+    if(!r.ok){
+      const detail = d.detail || d.error;
+      throw new Error(typeof detail === 'string' ? detail : `请求失败（HTTP ${r.status}）`);
+    }
+    return d;
+  }catch(e){
+    if(e.name==='AbortError') throw new Error('服务响应超时，请稍后重试');
+    if(e instanceof TypeError) throw new Error('无法连接本地服务，请确认服务正在运行');
+    throw e;
+  }finally{ clearTimeout(timer); }
 }
 document.querySelectorAll('aside button').forEach(b=>{
   b.onclick = ()=>{
-    document.querySelectorAll('aside button').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('aside button').forEach(x=>{x.classList.remove('active');x.removeAttribute('aria-current');});
     document.querySelectorAll('section').forEach(x=>x.classList.remove('active'));
-    b.classList.add('active');
+    b.classList.add('active'); b.setAttribute('aria-current','page');
     $('#tab-' + b.dataset.tab).classList.add('active');
+    if(b.dataset.tab==='qa')loadVideoLibrary();
   };
 });
 
 /* 顶部状态 */
 function setChip(id, text, kind){
   const el = $(id); el.className = 'chip' + (kind?' '+kind:'');
-  el.innerHTML = '<i class="dot"></i>' + text;
+  el.replaceChildren(); const dot = document.createElement('i'); dot.className='dot'; el.append(dot, document.createTextNode(text));
 }
 async function refresh(){
+  if(refreshBusy) return;
+  refreshBusy = true;
   try{
     const st = await api('/api/state');
-    const s = st.service;
+    runtimeOutdated = !st.runtime || st.runtime.protocol < 3 || st.runtime.restart_required;
+    $('#runtime-note').style.display = runtimeOutdated?'block':'none';
+    $('#runtime-note').textContent = runtimeOutdated
+      ? '新版识别规则尚未在这个本机服务生效，已暂停新分析。请在原启动终端按 Ctrl+C，再重新启动网页服务并刷新此页。仅刷新网页或启动另一个端口，不能更新当前旧进程。旧结果需重新分析。'
+      : '';
+    const s = st.service || {state:'idle'};
+    serviceReady = s.state==='ready';
+    stateFailed = false; $('#connection-note').style.display='none';
+    document.querySelectorAll('.heading-badge').forEach(el=>{el.innerHTML='<i class="dot"></i>'+((st.aggregate||{}).open_risks===false?'配置行为告警':'规则 + AI 风险双通道');});
     const map = {idle:['模型未启动',''], ready:['模型就绪','ok'],
       running:['隧道就绪','warn'], pending:['排队中','warn'],
-      submitting:['提交中','warn'], error:['启动失败','err'], stopped:['已停止','']};
+      submitting:['提交中','warn'], stopping:['正在停止并释放节点','warn'],
+      error:['启动失败','err'], stopped:['已停止','']};
     const m = map[s.state] || [s.state,''];
     setChip('#c-svc', m[0] + (s.node?' · '+s.node:''), m[1]);
     const mode = (st.aggregate||{}).mode || '—';
     setChip('#c-mode', '告警 ' + ({ai:'AI 判断', immediate:'立即告警',
       smoothed:'时序平滑'}[mode]||mode), mode==='ai'?'ok':'');
-    $('#svc-msg').textContent = s.message || s.state;
+    $('#svc-msg').textContent = s.message || (s.state==='stopping'?m[0]:s.state);
     const cost = st.cost || {};
     $('#svc-detail').innerHTML = Object.entries({
-      '状态':s.state,'作业号':s.jobid||'—','计算节点':s.node||'—','模型':s.model,
+      '状态':s.state==='stopping'?m[0]:s.state,'作业号':s.jobid||'—','计算节点':s.node||'—','模型':s.model,
       '本机隧道':s.local_url||'—','隧道':s.tunnel_alive?'✅ 连通':'—',
       '已运行':cost.uptime_text||'—',
       // 把"正在烧钱"变成看得见的数字 —— 用户就是被这个坑过
-      '估算花费':(cost.est_cost?`≈ <b style="color:var(--warn)">${cost.est_cost} 元</b>`
-                 +`（${cost.price_per_hour} 元/卡时）`:'—')
-    }).map(([k,v])=>`${k}：<b>${v??'—'}</b>`).join('<br>');
+      '估算花费':(cost.est_cost?`≈ <b style="color:var(--warn)">${esc(cost.est_cost)} 元</b>`
+                 +`（${esc(cost.price_per_hour)} 元/卡时）`:'—')
+    }).map(([k,v])=>`${esc(k)}：<b>${k==='估算花费'?v:esc(v??'—')}</b>`).join('<br>');
     $('#log-box').textContent = (st.log||[]).join('\n') || '—';
-    const busy = ['ready','running','pending','submitting'].includes(s.state);
-    $('#btn-start').disabled = busy; $('#btn-stop').disabled = !busy;
+    const busy = ['ready','running','pending','submitting','stopping'].includes(s.state);
+    $('#btn-start').disabled = runtimeOutdated || busy; $('#btn-stop').disabled = !busy;
     $('#svc-bar').style.width = s.state==='ready'?'100%':(busy?'55%':'0%');
     if(!uploadedJob) $('#btn-detect').disabled = s.state!=='ready';
     // ⚠️ 勾了「演示模式」就不需要集群 —— 这一条曾经写死成"服务没就绪就禁用"，
     //    等于把"没 VPN 也能试"的唯一入口堵死了。
-    const canMonitor = (s.state === 'ready') || $('#m-mock').checked;
-    $('#m-start').disabled = !canMonitor;
+    const canMonitor = !runtimeOutdated && ((s.state === 'ready') || $('#m-mock').checked);
+    updateControls();
     // 按不动就说明为什么、并给一键去处（用户实测反馈："检测到摄像头后
     // 开始监测按钮按不了" —— 当时按钮只是变灰，一个字都没解释）
     const why = $('#m-why');
-    if (canMonitor) {
+    if (runtimeOutdated) {
+      why.style.display = 'block';
+      why.textContent = '请先按页面顶部提示重启本机网页服务，使新版识别规则生效。';
+    } else if (canMonitor) {
       why.style.display = 'none';
     } else {
       why.style.display = 'block';
-      why.innerHTML = '<b>「开始监测」暂时不可用</b>：监测需要模型来判断画面，'
-        + '而现在两种情况都不满足 ——<br>'
-        + '① 集群推理服务未启动（当前状态 <b>' + (s.state || 'idle') + '</b>，'
-        + '约 4 元/卡时，用完记得停止）；'
-        + '或<br>② 勾选上方的 <b>「演示模式（AI 结论是假的）」</b>，'
-        + '用本地假模型把链路跑通（<b>不花钱、不需要 VPN</b>）。'
+      why.innerHTML = '<b>真实分析需要模型就绪</b>：启动推理服务后可以开始监测。'
+        + '也可选择演示模式，不需要集群，结论为模拟数据。'
         + '<div style="margin-top:9px">'
         + '<button class="btn sm" id="m-goto-service">去启动推理服务</button> '
         + '<button class="btn ghost sm" id="m-tick-mock">改用演示模式</button></div>';
       $('#m-goto-service').onclick = ()=>{
         document.querySelector('aside button[data-tab="service"]').click();
-        flash('在②页点「启动服务」，等 1-3 分钟就绪后再回来点开始监测');
+        flash('在推理服务页启动服务，模型就绪后即可开始监测');
       };
       $('#m-tick-mock').onclick = ()=>{
         $('#m-mock').checked = true; refresh();
@@ -578,13 +530,21 @@ async function refresh(){
       $('#m-stride').value = st.live.window_stride_sec;
     if(!batchTouched && (st.live||{}).continuous_batch_windows)
       $('#m-batch').value = st.live.continuous_batch_windows;
-    $('#btn-detect').disabled = uploadedJob
-      ? (s.state!=='ready') && !$('#f-mock').checked : true;
+    if(!recheckTouched && (st.live||{}).motion_recheck_sec)
+      $('#m-recheck').value = st.live.motion_recheck_sec;
+    updateDelayEstimate();
+    updateControls();
     $('#f-scene').style.display = $('#f-mock').checked ? '' : 'none';
     $('#m-scene').style.display = $('#m-mock').checked ? '' : 'none';
     $('#f-mock-note').style.display = $('#f-mock').checked ? 'block' : 'none';
     renderCostBar(st);
-  }catch(e){}
+  }catch(e){
+    serviceReady = false; updateControls();
+    $('#connection-note').style.display='block';
+    $('#connection-note').textContent='本地服务连接异常：'+e.message+'。页面会自动重试。';
+    if(!stateFailed) setChip('#c-svc','本地服务离线','err');
+    stateFailed = true;
+  }finally{ refreshBusy=false; }
 }
 
 /* 成本横幅：孤儿作业 / 自动释放。
@@ -596,12 +556,12 @@ function renderCostBar(st){
   const orph = st.orphans || [];
   if(orph.length){
     parts.push(`<b>⚠️ 集群上还有 ${orph.length} 个本项目作业在跑</b>
-      （${orph.map(j=>j.jobid+' '+j.name).join('、')}），
+      （${orph.map(j=>esc(j.jobid)+' '+esc(j.name)).join('、')}），
       很可能正在计费，而你并没有在用它们。
       <button class="btn sm" id="cost-sweep">立即停掉</button>`);
   }
   if(st.auto_released){
-    parts.push(`<b>🛑 ${st.auto_released}</b>
+    parts.push(`<b>🛑 ${esc(st.auto_released)}</b>
       <button class="btn ghost sm" id="cost-ack">知道了</button>`);
   }
   if(!parts.length){ bar.style.display='none'; bar.innerHTML=''; return; }
@@ -638,10 +598,22 @@ window.addEventListener('pagehide', ()=>{
   try{ navigator.sendBeacon('/api/heartbeat',
     new Blob([JSON.stringify({visible:false})],{type:'application/json'})); }catch(e){}
 });
-$('#m-mock').onchange = ()=>{ refresh(); };
-$('#f-mock').onchange = ()=>{ refresh(); };
-$('#m-stride').addEventListener('input', ()=>{ strideTouched = true; });
-$('#m-batch').addEventListener('input', ()=>{ batchTouched = true; });
+$('#m-mock').onchange = ()=>{ updateControls(); refresh(); };
+$('#f-mock').onchange = ()=>{ updateControls(); refresh(); };
+$('#m-stride').addEventListener('input', ()=>{ strideTouched = true; updateDelayEstimate(); });
+$('#m-batch').addEventListener('input', ()=>{ batchTouched = true; updateDelayEstimate(); });
+$('#m-recheck').addEventListener('input', ()=>{ recheckTouched = true; });
+$('#m-apply-live').onclick = async ()=>{
+  const stride=Number($('#m-stride').value),batch=Number($('#m-batch').value),recheck=Number($('#m-recheck').value);
+  if(!Number.isFinite(stride)||stride<0.5||stride>60||!Number.isInteger(batch)||batch<1||batch>8||!Number.isFinite(recheck)||recheck<1||recheck>300)
+    return flash('分析间隔需为 0.5–60 秒，攒批需为 1–8 的整数，静止复检需为 1–300 秒','err');
+  $('#m-apply-live').disabled=true;
+  try{
+    await api('/api/live/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({window_stride_sec:stride,continuous_batch_windows:batch,motion_recheck_sec:recheck})});
+    flash('分析节奏已更新，持续监测下一批生效','ok');
+  }catch(e){flash('更新失败：'+e.message,'err');}
+  finally{$('#m-apply-live').disabled=false;}
+};
 $('#btn-start').onclick = async ()=>{
   $('#btn-start').disabled = true;
   try{ const r = await api('/api/service/start',{method:'POST',
@@ -663,20 +635,20 @@ $('#m-cams').onclick = async ()=>{
     const r = await api('/api/live/cameras');
     if(r.cameras.length){
       $('#m-probe-msg').innerHTML = '找到：' + r.cameras.map(c=>
-        `<b>#${c.index}</b> ${c.width}×${c.height}`
-        + (c.backend?` <span class="muted">(${c.backend})</span>`:'')).join('　')
+        `<b>#${esc(c.index)}</b> ${esc(c.width)}×${esc(c.height)}`
+        + (c.backend?` <span class="muted">(${esc(c.backend)})</span>`:'')).join('　')
         + '　<span class="muted">→ 填进上面的输入框再点「开始监测」</span>';
     }else{
       // ⚠️ 后端会把"是否受限令牌"一起返回：受限时"一个都没有"的最可能
       //    原因就是权限，而不是硬件 —— 不能含糊过去（实测被误导过）
       const tips = String(r.hint||'未找到可用摄像头')
-        .split('；').map(t=>`<li>${t}</li>`).join('');
+        .split('；').map(t=>`<li>${esc(t)}</li>`).join('');
       $('#m-probe-msg').innerHTML =
         `<span style="color:var(--warn)">未找到可用摄像头`
         + (r.restricted? '（<b>本服务进程权限受限</b>）':'') + '</span>'
         + `<ul style="margin:7px 0 0 16px;padding:0;font-size:12.5px">${tips}</ul>`
         + (r.tried? `<div class="muted" style="font-size:11.5px;margin-top:5px">`
-            + `已尝试：${r.tried.join('、')}</div>`:'');
+            + `已尝试：${r.tried.map(esc).join('、')}</div>`:'');
     }
   }catch(e){ $('#m-probe-msg').textContent = '❌ ' + e.message; }
 };
@@ -687,15 +659,15 @@ $('#m-probe').onclick = async ()=>{
     const r = await api('/api/live/probe',{method:'POST',
       headers:{'Content-Type':'application/json'}, body:JSON.stringify({source:src})});
     if(r.ok){
-      $('#m-probe-msg').innerHTML = `✅ ${r.label}　${r.width}×${r.height}　`
-        + `${r.measured_fps} fps`
-        + (r.transport? `　传输 ${r.transport.toUpperCase()}` : '')
-        + (r.note? `<br><span style="color:var(--warn)">⚠️ ${r.note}</span>` : '');
+      $('#m-probe-msg').innerHTML = `已连接 ${esc(r.label)}　${esc(r.width)}×${esc(r.height)}　`
+        + `${esc(r.measured_fps)} fps`
+        + (r.transport? `　传输 ${esc(r.transport.toUpperCase())}` : '')
+        + (r.note? `<br><span style="color:var(--warn)">${esc(r.note)}</span>` : '');
     }else{
-      let h = `❌ ${r.error||'不可用'}`;
+      let h = `连接失败：${esc(r.error||'不可用')}`;
       if(r.hints && r.hints.length){
         h += '<br><br><b>常见网络摄像头地址格式</b>（照着改成你设备的 IP / 账号密码）：<br>'
-          + r.hints.map(x=>`· <b>${x[0]}</b>：<code>${x[1]}</code>`).join('<br>');
+          + r.hints.map(x=>`· <b>${esc(x[0])}</b>：<code>${esc(x[1])}</code>`).join('<br>');
       }
       $('#m-probe-msg').innerHTML = h;
     }
@@ -704,18 +676,23 @@ $('#m-probe').onclick = async ()=>{
 $('#m-start').onclick = async ()=>{
   const src = $('#m-src').value.trim();
   if(!src) return flash('请填写视频源','err');
+  if(monitorStarting || monitorRunning) return;
+  const stride = Number($('#m-stride').value), batch = Number($('#m-batch').value), recheck = Number($('#m-recheck').value);
+  if(!Number.isFinite(stride)||stride<0.5||stride>60 || !Number.isInteger(batch)||batch<1||batch>8 || !Number.isFinite(recheck)||recheck<1||recheck>300)
+    return flash('分析间隔需为 0.5–60 秒，攒批需为 1–8 的整数，静止复检需为 1–300 秒','err');
   const useMock = $('#m-mock').checked;
-  $('#m-start').disabled = true; $('#m-stop').disabled = false;
-  $('#m-feed').innerHTML = '';
-  $('#m-alerts').innerHTML = '<span class="muted">监测中…</span>';
+  armSpeech();
+  monitorStarting = true; updateControls();
+  clearMonitorHistory();
+  $('#m-feed').innerHTML = emptyState('正在连接与采集','第一批画面分析完成后，观察记录会逐条显示。');
+  $('#m-msg').textContent='正在启动监测…';
   $('#m-warn').style.display = 'none';
   try{
     await api('/api/live/config',{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
-        window_stride_sec: parseFloat($('#m-stride').value)||2,
-        // 攒批窗口数：实时性的主旋钮，见页面上的说明
-        continuous_batch_windows: parseInt($('#m-batch').value,10)||2})});
+        window_stride_sec: stride,
+        continuous_batch_windows: batch, motion_recheck_sec: recheck})});
     const r = await api('/api/live/start',{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({source:src, continuous:true, with_actions:true,
@@ -728,15 +705,18 @@ $('#m-start').onclick = async ()=>{
       w.style.display='block';
       const sc = $('#m-scene').selectedOptions[0].textContent;
       w.innerHTML = '⚠️ <b>当前是演示模式，识别结论由本地假模型产出，不是真实识别结果</b>'
-        + `（${sc}）。画面与推理链路是真的（真在拉流、真在切窗、真在推送），`
+        + `（${esc(sc)}）。画面与推理链路是真的（真在拉流、真在切窗、真在推送），`
         + '所以能验证链路与页面，但<b>不能用来判断准确率</b>。'
         + '想看真实效果：取消勾选「演示模式」，到「服务」页启动集群服务。';
     } else {
       $('#m-warn').style.display='none';
     }
-    monJob = r.job_id; streamMonitor(r.job_id); startLiveView(r.job_id);
+    monitorStarting = false; monitorRunning = true;
+    monJob = r.job_id; speech.begin(r.job_id);newSpeechRuns.add(r.job_id);streamMonitor(r.job_id); startLiveView(r.job_id); updateControls();
+    saveSessionJob('monitor', r.job_id);
   }catch(e){
-    flash(e.message,'err'); $('#m-start').disabled=false; $('#m-stop').disabled=true;
+    monitorStarting = false; monitorRunning = false; updateControls();
+    $('#m-msg').textContent='启动失败：'+e.message; flash(e.message,'err');
   }
 };
 $('#m-stop').onclick = async ()=>{
@@ -747,36 +727,45 @@ $('#m-stop').onclick = async ()=>{
 };
 
 function stopLiveView(){
+  liveViewToken++;
   if(monLiveTimer){ clearInterval(monLiveTimer); monLiveTimer=null; }
   if(monNextTimer){ clearInterval(monNextTimer); monNextTimer=null; }
+  const img = $('#m-live');
+  img.onload=null; img.onerror=null; img.classList.remove('big');
+  img.removeAttribute('src'); img.style.display='none';
+  $('#m-live-ph').style.display='';
   $('#m-live-hint').textContent = '已停止';
+  $('#m-live-hint').className='chip';
 }
-/* 实时画面：优先用 MJPEG 真流（浏览器原生渲染，约 10 张/秒、连续不断）。
-   ⚠️ 原先是"每 350ms 轮询一张 JPEG"，最多 3 张/秒且断续 —— 用户反馈
-      "实时画面很卡"有一部分就来自这里。更关键的是：轮询只能拿到磁盘上
-      已有的预览帧，而采集线程在推理时根本不写帧，于是整段冻住。
-      改流之后，帧由**读帧线程**持续产出（推理期间照走），所以不再冻。
-   万一服务端不支持/断流，退回轮询模式，保证画面不会永久空白。 */
 function startLiveView(jid){
   stopLiveView();
-  $('#m-live-hint').textContent = '实时流';
+  const token = liveViewToken;
+  $('#m-live-hint').textContent = '正在连接';
+  $('#m-live-hint').className='chip warn';
   const img = $('#m-live');
   let fellBack = false;
   img.onerror = ()=>{
-    if(fellBack) return;
+    if(token!==liveViewToken || fellBack) return;
     fellBack = true;
-    $('#m-live-hint').textContent = '预览（轮询回退）';
+    $('#m-live-hint').textContent = '预览 · 轮询回退';
     const tick = ()=>{
+      if(token!==liveViewToken) return;
       const probe = new Image();
-      probe.onload = ()=>{ img.src = probe.src; img.style.display='block';
-                           $('#m-live-ph').style.display='none'; };
+      probe.onload = ()=>{
+        if(token!==liveViewToken) return;
+        img.src = probe.src; img.style.display='block'; $('#m-live-ph').style.display='none';
+      };
+      probe.onerror = ()=>{ if(token===liveViewToken) $('#m-live-hint').textContent='等待视频源恢复'; };
       probe.src = `/api/job/${jid}/preview?t=${Date.now()}`;
     };
-    tick();
-    monLiveTimer = setInterval(tick, 350);
+    tick(); monLiveTimer = setInterval(tick, 500);
   };
-  img.onload = ()=>{ img.style.display='block'; $('#m-live-ph').style.display='none'; };
-  // 加时间戳避免浏览器复用旧连接
+  img.onload = ()=>{
+    if(token!==liveViewToken) return;
+    img.style.display='block'; $('#m-live-ph').style.display='none';
+    $('#m-live-hint').textContent=fellBack?'预览 · 轮询回退':'实时流';
+    $('#m-live-hint').className='chip ok';
+  };
   img.src = `/api/job/${jid}/stream.mjpg?t=${Date.now()}`;
 }
 /* 节奏显示：必须说真话（踩过一次）。
@@ -805,21 +794,11 @@ function noteWindowArrival(d){
 function renderWindowPace(d, stride){
   const el = $('#m-next');
   if(!el) return;
-  if(monPrevN > 1 && monPrevSpan > 0){
-    const per = monPrevSpan / monPrevN;
-    el.innerHTML = `<b>本批 ${monCurBatch} 条结论已出</b>　`
-      + `上一批 ${monPrevN} 条用时 <b>${monPrevSpan.toFixed(1)}s</b>，`
-      + `均摊 <b${per <= 3 ? ' style="color:var(--ok)"' : ''}>`
-      + `${per.toFixed(1)} 秒/条</b>`
-      + `<br><span class="muted">批量化后结论成批到达（一批一起出、然后等下一批）：`
-      + `变快的是<b>节奏</b>，不是单条延迟。</span>`;
-    return;
-  }
-  const lat = d.latency || 0;
-  el.innerHTML = `本窗耗时 <b>${lat.toFixed(1)}s</b>，下一个窗口约 `
-    + `<b>${Math.round(stride + lat)}</b> 秒后产出`
-    + `<br><span class="muted">当前服务端 batch=1（未启用批量）：`
-    + `每个窗口一次往返，节奏 ≈ 步长 + 推理耗时。</span>`;
+  const age=Number(d.result_age_sec);
+  const elapsed=Number(d.roundtrip_sec??d.latency??0);
+  el.innerHTML=`本窗识别用时 <b>${elapsed.toFixed(1)}s</b>`
+    +(Number.isFinite(age)&&d.result_age_sec!=null?` · 判定画面距现场约 <b>${age.toFixed(1)}s</b>`:'')
+    +'<br><span class="muted">实时预览持续刷新，检测完成后立即显示结果。</span>';
 }
 function startNextCountdown(stride){
   if(monNextTimer){ clearInterval(monNextTimer); monNextTimer=null; }
@@ -833,151 +812,131 @@ function startNextCountdown(stride){
   render();
   monNextTimer = setInterval(()=>{ left -= 1; render(); }, 1000);
 }
-$('#m-live').onclick = ()=> $('#m-live').classList.toggle('big');
-$('#m-evidence').onclick = ()=> $('#m-evidence').classList.toggle('big');
-
-/* ── 逐条显示（用户要求"一条一条出，不要一批一起蹦"）──
-   为什么要做：批量推理是"一次前向算完 N 个窗口"，所以这 N 个结果必然
-   在**同一瞬间**算完 —— 页面直接推就是"一批一起蹦出来"。
-   但一批 8 条要花约 11.5 秒算完，这恰好等于 1.44 秒/条：
-   把显示按这个节奏铺开，用户看到的是一条一条稳定出现，
-   而且**永远不落后**（显示速度恰好等于产出速度，不会越积越多）。
-   ⚠️ 页面必须如实说明"后台是批量算的、这里是按节奏显示"，
-      否则就是在假装单条延迟变快了。 */
-let monQueue = [];
-let monPaceMs = 1400;        // 当前逐条间隔（自适应，见 updatePace）
-let monPaceTimer = null;
-let monShownN = 0;
-let monBatchSize = 8;        // 上一批的条数（用于判断"是否真的落后"）
-
-/* 显示间隔：**匀速**是这里的核心目标，别为了清空积压就加速。
-   ⚠️ 第一版按积压量激进提速（>6 条就 3 倍速），结果是"2 秒内蹦完 8 条、
-   然后空等 9 秒"—— 用户看到的仍然是"一阵一阵的"，不是一条一条。
-   正确做法：按**产出速率**匀速显示（一批 8 条 / 11.5 秒 → 1.44 秒一条），
-   稳态下显示速度恰好等于产出速度，积压不会增长，节奏就是稳的。
-   只有真的落后（积压超过两批）才加速追。 */
-function paceDelayFor(backlog, baseMs, batchSize){
-  const bs = batchSize || 1;
-  if(backlog > bs * 2) return Math.max(200, baseMs / 3);
-  if(backlog > bs) return Math.max(300, baseMs / 2);
-  return baseMs;
+/* 独立查看层不受卡片的 flex 排版、滚动裁剪或入场动画影响。 */
+const imageViewer=$('#image-viewer');
+let imageViewerSource=null;
+function openImageViewer(source){
+  if(!source.getAttribute('src'))return;
+  imageViewerSource=source;
+  $('#image-viewer-image').src=source.currentSrc||source.src;
+  $('#image-viewer-image').alt=source.alt||'完整画面';
+  $('#image-viewer-title').textContent=(source.alt||'完整画面')+' · 按原比例完整显示';
+  document.body.classList.add('image-viewer-open');
+  if(!imageViewer.open)imageViewer.showModal();
 }
-function updatePace(){
-  // 用"上一批 N 条用了 X 秒"推出每条应占的时间；限幅避免极端值
-  if(monPrevN > 1 && monPrevSpan > 0){
-    monPaceMs = Math.min(5000, Math.max(250, (monPrevSpan / monPrevN) * 1000));
-    monBatchSize = monPrevN;
-  }
-}
+$('#image-viewer-close').onclick=()=>imageViewer.close();
+imageViewer.onclick=e=>{if(e.target===imageViewer||e.target===$('#image-viewer-image'))imageViewer.close();};
+imageViewer.addEventListener('close',()=>{
+  document.body.classList.remove('image-viewer-open');
+  $('#image-viewer-image').removeAttribute('src');
+  if(imageViewerSource?.isConnected)imageViewerSource.focus({preventScroll:true});
+  imageViewerSource=null;
+});
+['#m-live','#m-evidence'].forEach(id=>{
+  const image=$(id); image.tabIndex=0; image.setAttribute('role','button');
+  image.setAttribute('aria-label',image.alt+'，点击或按回车放大');
+  image.onclick=()=>openImageViewer(image);
+});
+document.addEventListener('keydown',e=>{
+  if((e.key==='Enter'||e.key===' ') && e.target.matches('img[role="button"]')){e.preventDefault();e.target.click();}
+});
+
+/* 结果一到就显示；保留逐窗口卡片，不额外排队制造显示延迟。 */
 function enqueueWindow(d, jid){
-  monQueue.push({d, jid});
+  renderWindowCard(d,jid);
   renderPaceHint();
-  if(monPaceTimer) return;
-  const step = ()=>{
-    monPaceTimer = null;
-    if(!monQueue.length) return;
-    const it = monQueue.shift();
-    renderWindowCard(it.d, it.jid);
-    monPaceTimer = setTimeout(step,
-      paceDelayFor(monQueue.length, monPaceMs, monBatchSize));
-    renderPaceHint();
-  };
-  monPaceTimer = setTimeout(step, 0);
 }
 function renderPaceHint(){
   const el = $('#m-pace');
   if(!el) return;
-  const backlog = monQueue.length;
-  if(!monPrevN || monPrevN <= 1){
-    el.textContent = '当前服务端 batch=1：结论本来就是一条一条来的';
-    return;
-  }
-  el.innerHTML = `后台：<b>${monPrevN} 条/批</b>（一批约 ${monPrevSpan.toFixed(1)}s）`
-    + `　·　页面：<b>逐条显示，约 ${(monPaceMs/1000).toFixed(1)}s 一条</b>`
-    + (backlog ? `　·　待显示 <b>${backlog}</b> 条` : '')
-    + `<br><span class="muted">批量算得快、但一批是同时算完的；
-       这里按"一批耗时 ÷ 条数"匀速铺开显示，所以你看到的是一条一条，
-       且显示速度与产出速度一致、不会越积越多。</span>`;
+  el.textContent='AI 结果完成后立即显示，不增加页面等待。';
 }
 function renderWindowCard(d, jid){
   $('#m-bar').style.width = Math.min(100, Math.round((d.progress||0)*100)) + '%';
   const n = d.cumulative || d.index;
-  $('#m-msg').textContent = `监测中 · 第 ${n} 个窗口 · ${d.t_start}s–${d.t_end}s`
+  if(monitorRunning) $('#m-msg').textContent = `监测中 · 第 ${n} 个窗口 · ${d.t_start}s–${d.t_end}s`
     + (d.latency ? ` · 本批 ${d.batch||1} 条` : '');
   $('#mm-win').textContent = n;
-  if(d.latency) $('#mm-lat').textContent = d.latency.toFixed(1)+'s';
-  // 延迟分解：输出 token 数就是"慢"的根源（每 token 约 28ms），
-  // 跳过模型调用的窗口也在这里标出来
+  if(d.latency) $('#mm-lat').textContent = Number(d.roundtrip_sec??d.latency).toFixed(1)+'s';
+  if(d.timing) $('#mm-lat').title=`排队 ${d.timing.queue_sec??0}s · 图片处理 ${d.timing.prepare_sec??0}s · 模型生成 ${d.timing.generate_sec??0}s`;
+  // 保留输出量与耗时信息；跳过模型调用的窗口单独标注。
   if(d.skipped){
     $('#mm-tok').textContent = '跳过';
     $('#mm-tok').title = `画面无明显变化（动作量 ${d.motion ?? '?'}），未调用模型`;
   } else if(d.tokens_out){
     $('#mm-tok').textContent = d.tokens_out + ' tok';
     $('#mm-tok').title = `输入 ${d.tokens_prompt||'?'} tok，输出 ${d.tokens_out} tok`
-      + `（约 ${(d.tokens_out*0.028).toFixed(1)}s 花在解码）`;
+;
   }
   // 模型判定帧：这就是 AI 实际看到的那张图
   const ev = $('#m-evidence');
-  ev.src = `/api/job/${jid}/frames/${d.window_id}/0?t=${Date.now()}`;
+  ev.src = frameThumbUrl(jid,d);
   addAction(d, jid);
-  monShownN += 1;
 }
 
+function clearMonitorHistory(){
+  if(monEs){monEs.close();monEs=null;}
+  monPrevN=0;monPrevSpan=0;monLastEvT=0;monCurBatch=0;monBatchStart=0;
+  $('#mm-win').textContent='0';$('#mm-people').textContent='0';$('#mm-lat').textContent='—';$('#mm-tok').textContent='—';$('#mm-alerts').textContent='0';
+  $('#m-evidence').removeAttribute('src');$('#m-pace').textContent='';$('#m-bar').style.width='0%';
+  renderAlerts([],true);
+}
+function finishMonitor(summary={}){
+  monitorStarting=false;monitorRunning=false;
+  if(monEs){monEs.close();monEs=null;}
+  stopLiveView();updateControls();
+  $('#m-msg').textContent=summary.message||'监测已停止';
+  $('#m-bar').style.width='100%';
+  renderAlerts(summary.alerts||alertStore.monitor,true);
+  saveSessionJob('monitor',null);
+}
+function parseStreamEvent(ev){
+  try{return JSON.parse(ev.data);}catch(e){flash('收到无法读取的分析结果，正在等待下一条更新','warn');return null;}
+}
 function streamMonitor(jid){
   if(monEs) monEs.close();
-  monQueue = []; monShownN = 0;
-  monPrevN = 0; monPrevSpan = 0;
-  monEs = new EventSource(`/api/job/${jid}/stream`);
-  monEs.onmessage = ev=>{
-    const d = JSON.parse(ev.data);
+  const source = new EventSource(`/api/job/${jid}/stream`);
+  monEs = source;
+  let connectionWarned=false;
+  source.onopen=()=>{if(monEs!==source)return;connectionWarned=false;$('#m-msg').textContent='监测已连接 · 等待下一条分析';};
+  source.onmessage = ev=>{
+    if(monEs!==source || monJob!==jid) return;
+    const d=parseStreamEvent(ev);if(!d)return;
+    if(d.type==='hello'||d.type==='final'){
+      const summary=d.summary||{};
+      renderAlerts(summary.alerts||[],true);
+      speechHello(jid,summary.alerts||[],true);
+      if(['done','error','stopped'].includes(summary.state)){finishMonitor(summary);return;}
+    }
     if(d.type==='window'){
-      // 先记账（用于算批间隔），再入队逐条显示
-      noteWindowArrival(d);
-      updatePace();
-      enqueueWindow(d, jid);
-      if(monNextTimer){ clearInterval(monNextTimer); monNextTimer = null; }
+      noteWindowArrival(d);enqueueWindow(d,jid);
+      if(monNextTimer){clearInterval(monNextTimer);monNextTimer=null;}
     }
-    // ★ 逐窗口的告警事件：告警现在会在第一个命中窗口之后立刻出现，
-    //   不再等到整个视频跑完（实测反馈的"告警要等中止才出"）
     if(d.type==='alerts'){
-      $('#mm-alerts').textContent = (d.alerts||[]).length;
-      renderAlerts(d.alerts||[], true);
-      const w = $('#m-warn');
+      renderAlerts(d.alerts||[],true);
+      speakAlerts(jid,d.alerts||[],true);
+      const w=$('#m-warn');
       if(d.behind){
-        w.style.display = 'block';
-        w.innerHTML = '⚠️ <b>处理速度跟不上画面</b>：单窗口耗时已接近或超过窗口步长，'
-          + '系统会逐渐滞后（看到的是几秒前的画面）。请把「窗口步长」调大，'
-          + '或减少启用的行为数量。';
-      } else {
-        w.style.display = 'none';
-      }
+        w.style.display='block';
+        w.innerHTML='<b>检测结果晚于现场画面</b>：实时预览继续刷新，AI 正在分析已采集的画面。请结合判定帧时间核查结果。';
+      }else if(!$('#m-mock').checked){w.style.display='none';}
     }
-    if(d.type==='done'){
-      $('#m-msg').textContent = d.summary.message;
-      $('#m-bar').style.width='100%';
-      monEs.close(); monEs=null;
-      stopLiveView();
-      $('#m-start').disabled=false; $('#m-stop').disabled=true;
-      flash('监测已停止','ok');
-    }
+    if(d.type==='done'){finishMonitor(d.summary||{});flash('监测已停止','ok');}
     if(d.type==='error'){
-      $('#m-msg').textContent = '❌ ' + d.error;
-      // 持续监测里流断了会自动重连，这时**不能**停掉实时画面轮询，
-      // 否则用户看到画面冻住，其实后台已经在重连了。
-      if(!d.recovering){
-        flash('监测失败：'+d.error,'err');
-        stopLiveView();
-      } else {
-        flash(d.error,'warn');
-      }
-      monEs.close(); monEs=null;
-      $('#m-start').disabled=false; $('#m-stop').disabled=true;
+      $('#m-msg').textContent='监测异常：'+(d.error||'未知错误');
+      if(d.recovering){flash(d.error||'视频源恢复中','warn');return;}
+      const message='监测失败：'+(d.error||'未知错误');finishMonitor({message});flash(message,'err');
     }
   };
-  monEs.onerror = ()=>{ if(monEs){ monEs.close(); monEs=null;
-    flash('实时连接中断，可刷新页面','err'); } };
+  source.onerror=()=>{
+    if(monEs!==source)return;
+    $('#m-msg').textContent='分析连接中断 · 正在自动重连';
+    if(!connectionWarned){flash('分析连接中断，正在自动重连；视频预览继续运行','warn');connectionWarned=true;}
+    if(source.readyState===EventSource.CLOSED){
+      finishMonitor({message:'分析连接已关闭，请重新开始监测'});
+    }
+  };
 }
-
 /* 缩略图：取**窗口中间那一帧**，而不是第 0 帧。
    为什么（用户实测反馈"图片始终是同一张，并不是人做对应动作的那一帧"）：
      ① 每个窗口 4 帧，第 0 帧是窗口**开头**那一帧 —— 动作往往在后面几帧里，
@@ -991,56 +950,65 @@ function frameThumbUrl(jid, d){
   const mid = Math.floor((n - 1) / 2);
   const f0 = (d.frame0 === undefined || d.frame0 === null) ? -1 : d.frame0;
   // frame0 < 0 表示后端没给真实帧号（旧记录）→ 回退旧的"按时间戳推算"路径
-  const bust = f0 >= 0 ? f0 + mid : Math.round((d.t_start||0) * 100);
+  const actual = Array.isArray(d.frame_indices) ? d.frame_indices[mid] : undefined;
+  const bust = Number.isInteger(actual)&&actual>=0 ? actual : f0 >= 0 ? f0 + mid : Math.round((d.t_start||0) * 100);
   return `/api/job/${jid}/frames/${d.window_id}/${mid}?f=${bust}`;
 }
 
-function addAction(d, jid){
-  const people = d.people || [];
-  $('#mm-people').textContent = people.length;
-  const hits = d.hits || [];
-  const div = document.createElement('div');
-  div.className = 'act' + (hits.length?' hit':'');
-  const thumb = frameThumbUrl(jid, d);
-  let h = `<div class="top">
-      <span class="t">#${d.cumulative||d.index}</span>
-      <span>${d.t_start}s – ${d.t_end}s</span>
-      ${d.skipped
-        ? `<span class="tag" title="画面无明显变化（动作量 ${d.motion ?? '?'}），未调用模型">
-             跳过 · 画面无变化</span>`
-        : (d.latency?`<span>${d.latency.toFixed(1)}s</span>`:'')}
-      ${d.tokens_out?`<span class="muted" title="输出 token 数决定延迟（约 28ms/token）">${d.tokens_out} tok</span>`:''}
-      ${hits.map(x=>`<span class="tag">${x.name} ${(x.confidence*100).toFixed(0)}%</span>`).join('')}
-      ${d.error?`<span style="color:var(--err)">${d.error}</span>`:''}
-    </div>
-    <div class="row" style="align-items:flex-start;gap:14px;flex-wrap:nowrap">
-      <img class="thumb" src="${thumb}" loading="lazy"
-           onclick="this.classList.toggle('big')"
-           title="本窗口的中间一帧（共 ${d.frames||4} 帧）；点击放大">
-      <div style="flex:1;min-width:0">`;
-  if(d.scene) h += `<div style="font-size:13px;margin-bottom:6px">${d.scene}</div>`;
-  if(people.length){
-    people.forEach((p,i)=>{
-      h += `<div class="person"><span class="pin">${i+1}</span>
-        <div class="body">
-          <div class="where">${p.where||''}${p.appearance?' · '+p.appearance:''}</div>
-          <div class="doing">${p.action||''}</div>
-          ${p.changed && p.changed!=='无' ? `<div class="chg">↻ ${p.changed}</div>` : ''}
-        </div></div>`;
-    });
-  } else {
-    h += `<div class="muted" style="font-size:12.5px">画面中未识别到人</div>`;
-  }
-  h += `</div></div>`;
-  div.innerHTML = h;
-  const feed = $('#m-feed');
-  feed.prepend(div);
-  while(feed.children.length > 60) feed.lastChild.remove();
+function riskDetails(risks){
+  return (Array.isArray(risks)?risks:[]).map(r=>{
+    const severity=severityLabels[r.severity]?'sev-'+r.severity:'sev-medium';
+    const pending=Array.isArray(r.evidence_issues)&&r.evidence_issues.length>0;
+    return `<div class="risk-detail"><strong>${esc(r.name||'现场风险')}</strong> <span class="tag risk-source">AI 风险</span> <span class="tag ${severity}">${esc(severityLabels[r.severity]||'待评估')}</span> <span class="muted">${confidenceText(r.confidence)} · ${pending?'待复核，未告警':r.alert===true?'模型建议告警':'模型未建议告警'}</span>${r.person_desc?`<div class="risk-evidence">涉及人物：${esc(r.person_desc)}</div>`:''}${r.observable?`<div class="risk-evidence">${pending?'模型原始说法（待复核）':'模型描述的证据'}：${esc(r.observable)}</div>`:''}${r.alert_reason?`<div class="risk-evidence">模型判断理由：${esc(r.alert_reason)}</div>`:''}</div>`;
+  }).join('');
 }
-
+function evidenceReviewNotice(warnings){
+  return warnings.length?`<div class="evidence-review"><strong>待复核：证据不足，未告警</strong><ul>${warnings.map(w=>`<li>${esc(w.name||w.behavior_id||'本窗口')}：${esc((Array.isArray(w.issues)?w.issues:[]).join('；')||'缺少可核对的视觉证据')}</li>`).join('')}</ul></div>`:'';
+}
+function windowCard(d,jid){
+  const hits=!d.error&&Array.isArray(d.hits)?d.hits:[];
+  const risks=!d.error&&Array.isArray(d.risks)?d.risks:[];
+  const warnings=!d.error&&Array.isArray(d.evidence_warnings)?d.evidence_warnings:[];
+  const people=!d.error&&Array.isArray(d.people)?d.people:[];
+  const sceneText=d.error?'本窗口识别失败，未生成有效判断；后续窗口会继续检查。':d.scene||'暂无场景描述';
+  const div=document.createElement('article');
+  div.className='act'+(hits.length||risks.some(r=>r.alert===true)?' hit':'');
+  const latency=Number(d.latency);
+  div.innerHTML=`<div class="top"><span class="t">#${esc(d.cumulative||d.index||'—')}</span><span>${esc(d.t_start)}s – ${esc(d.t_end)}s</span>${d.skipped?'<span class="tag rule-source">画面静止 · 未调用模型</span>':(latency>0?`<span>${latency.toFixed(1)}s</span>`:'')}${d.tokens_out?`<span>${esc(d.tokens_out)} tok</span>`:''}${hits.map(x=>`<span class="tag">${esc(x.name)} ${confidenceText(x.confidence)}</span>`).join('')}${d.error?`<span style="color:var(--err)">${esc(d.error)}</span>`:''}</div>
+    <div class="row" style="align-items:flex-start;gap:13px;flex-wrap:nowrap"><img class="thumb" src="${esc(frameThumbUrl(jid,d))}" loading="lazy" alt="${esc(d.t_start)}至${esc(d.t_end)}秒窗口判定画面" tabindex="0" role="button" title="本窗口中间帧，点击或按回车放大"><div style="flex:1;min-width:0">${evidenceReviewNotice(warnings)}${warnings.length?'<div class="raw-description-label">以下为 AI 原始描述，待复核</div>':''}<div class="scene-desc">${esc(sceneText)}</div>${people.map((p,i)=>`<div class="person"><span class="pin">${i+1}</span><div class="body"><div class="where">${esc(p.where)}${p.appearance?' · '+esc(p.appearance):''}</div><div class="doing">${esc(p.action)}</div>${p.changed&&!['无','无明显变化'].includes(p.changed)?`<div class="chg">动作变化：${esc(p.changed)}</div>`:''}</div></div>`).join('')}${!people.length?`<div class="muted" style="font-size:11px">${d.error?'等待后续窗口的有效判断。':d.skipped?'本窗口未进行新的 AI 判断；静止画面会定期复检。':'画面中未识别到人物'}</div>`:''}${hits.map(x=>x.observable?`<div class="risk-detail"><strong>${esc(x.name)} · 配置行为</strong><div class="risk-evidence">模型描述的证据：${esc(x.observable)}</div>${x.alert_reason?`<div class="risk-evidence">判断理由：${esc(x.alert_reason)}</div>`:''}</div>`:'').join('')}${riskDetails(risks)}</div></div>`;
+  div.querySelector('.thumb').onclick=e=>openImageViewer(e.currentTarget);
+  if(d.verification){
+    const notice=document.createElement('details');
+    notice.style.cssText='margin-top:10px;font-size:12px';
+    const label={confirmed:'已由模型二次核验确认',rejected:'模型二次核验未确认该行为',unresolved:'模型二次核验仍缺证据，待复核'}[d.verification.status]||'模型二次核验';
+    notice.innerHTML=`<summary>${esc(label)}</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(d.verification.raw||d.verification.error||'无补充输出')}</pre>`;
+    div.append(notice);
+  }
+  if(d.frames>1){
+    const sequence=document.createElement('details');
+    sequence.style.cssText='margin-top:12px;font-size:11px;color:var(--dim)';
+    sequence.innerHTML=`<summary style="cursor:pointer">查看完整过程 · ${esc(d.frames)} 帧</summary><div style="display:flex;gap:8px;overflow-x:auto;padding:10px 0">${Array.from({length:Math.min(d.frames,32)},(_,i)=>{
+      const label=Array.isArray(d.frame_labels)&&d.frame_labels[i]?d.frame_labels[i]:`第 ${i+1} 帧`;
+      const actual=Array.isArray(d.frame_indices)&&d.frame_indices[i]>=0?d.frame_indices[i]:(d.frame0||0)+i;
+      const url=`/api/job/${encodeURIComponent(jid)}/frames/${encodeURIComponent(d.window_id)}/${i}?f=${actual}`;
+      return `<figure style="margin:0;flex:0 0 126px"><img class="sequence-frame" src="${esc(url)}" loading="lazy" alt="${esc(label)} · 模型输入第${i+1}帧" role="button" tabindex="0" style="width:126px;height:82px;object-fit:contain;background:#102b3e;border-radius:6px;cursor:zoom-in"><figcaption>${esc(label)}</figcaption></figure>`;
+    }).join('')}</div>`;
+    sequence.querySelectorAll('.sequence-frame').forEach(img=>img.onclick=()=>openImageViewer(img));
+    div.append(sequence);
+  }
+  return div;
+}
+function addAction(d,jid){
+  $('#mm-people').textContent=(d.people||[]).length;
+  const feed=$('#m-feed');
+  feed.querySelectorAll('.empty-state').forEach(el=>el.remove());
+  feed.prepend(windowCard(d,jid));
+  while(feed.children.length>60)feed.lastChild.remove();
+}
 /* 视频文件 */
 const drop = $('#drop'), fileInput = $('#file');
-drop.onclick = ()=> fileInput.click();
+drop.onclick = ()=>{if(!fileRunning&&!uploading)fileInput.click();else flash('当前视频正在处理，请等待完成或先中止','warn');};
+drop.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();drop.click();}};
 drop.ondragover = e=>{ e.preventDefault(); drop.classList.add('over'); };
 drop.ondragleave = ()=> drop.classList.remove('over');
 drop.ondrop = e=>{ e.preventDefault(); drop.classList.remove('over');
@@ -1048,21 +1016,26 @@ drop.ondrop = e=>{ e.preventDefault(); drop.classList.remove('over');
 fileInput.onchange = ()=>{ if(fileInput.files[0]) doUpload(fileInput.files[0]); };
 
 async function doUpload(f){
+  if(fileRunning||uploading)return flash('当前视频正在处理，请等待完成或先中止','warn');
+  if(!/\.(mp4|avi|mkv|mov|webm|m4v|mpeg|mpg)$/i.test(f.name)&&!f.type.startsWith('video/'))return flash('请选择视频文件','err');
+  uploading=true;updateControls();
   const fd = new FormData(); fd.append('file', f);
   $('#up-info').textContent = '上传中…';
   try{
     const r = await api('/api/upload',{method:'POST', body:fd});
     uploadedJob = r.job_id;
     $('#up-info').textContent = `${f.name} · ${r.size_mb} MB`;
-    $('#btn-detect').disabled = false;
-    flash('上传完成','ok');
-  }catch(e){ flash('上传失败：'+e.message,'err'); $('#up-info').textContent=''; }
+    clearFileHistory();$('#job-msg').textContent='上传完成 · 等待分析';
+    saveSessionJob('file',null);flash('上传完成','ok');
+  }catch(e){ flash('上传失败：'+e.message,'err'); $('#up-info').textContent='上传失败：'+e.message; }
+  finally{uploading=false;updateControls();}
 }
 $('#btn-detect').onclick = async ()=>{
   if(!uploadedJob) return flash('请先上传视频','err');
-  $('#btn-detect').disabled=true; $('#btn-abort').disabled=false;
-  $('#alerts').innerHTML='<span class="muted">分析中…</span>';
-  $('#windows').innerHTML='';
+  if(fileRunning)return;
+  armSpeech();
+  fileRunning=true;currentJob=uploadedJob;updateControls();
+  clearFileHistory();$('#job-msg').textContent='正在开始分析…';
   const useMock = $('#f-mock').checked;
   $('#f-mock-note').style.display = useMock ? 'block' : 'none';
   try{
@@ -1071,97 +1044,177 @@ $('#btn-detect').onclick = async ()=>{
       body:JSON.stringify({use_mock: useMock,
                            mock_scene: $('#f-scene').value,
                            loop: $('#f-loop').checked})});
-    streamJob(uploadedJob);
-  }catch(e){ flash(e.message,'err'); $('#btn-detect').disabled=false;
-    $('#btn-abort').disabled=true; }
+    speech.begin(uploadedJob);newSpeechRuns.add(uploadedJob);streamJob(uploadedJob);saveSessionJob('file',uploadedJob);
+  }catch(e){fileRunning=false;updateControls();$('#job-msg').textContent='启动失败：'+e.message;flash(e.message,'err');}
 };
 $('#btn-abort').onclick = async ()=>{
-  if(!uploadedJob) return;
-  try{ await api('/api/stop/'+uploadedJob,{method:'POST'}); flash('已请求中止'); }
+  if(!currentJob) return;
+  try{ await api('/api/stop/'+currentJob,{method:'POST'}); flash('已请求中止'); }
   catch(e){ flash(e.message,'err'); }
 };
+function clearFileHistory(){
+  if(es){es.close();es=null;}
+  $('#job-bar').style.width='0%';
+  $('#windows').innerHTML=emptyState('等待分析窗口','分析开始后，显示判定帧、动作和风险证据。');
+  renderAlerts([],false);
+}
+function finishFile(summary={}){
+  setTimeout(()=>loadVideoLibrary(),500);
+  fileRunning=false;if(es){es.close();es=null;}updateControls();
+  $('#job-bar').style.width='100%';$('#job-msg').textContent=summary.message||'分析已结束';
+  renderAlerts(summary.alerts||alertStore.file,false);saveSessionJob('file',null);
+}
 function streamJob(jid){
-  currentJob = jid;
-  if(es) es.close();
-  es = new EventSource(`/api/job/${jid}/stream`);
-  es.onmessage = ev=>{
-    const d = JSON.parse(ev.data);
-    if(d.type==='window') addWindow(d, jid);
-    if(d.type==='hello'||d.type==='final')
-      $('#job-bar').style.width = Math.round((d.summary.progress||0)*100)+'%';
-    // ★ 告警逐窗口实时刷新（以前后端只在整遍跑完后推一次、而且前端还不处理，
-    //   于是"告警要等中止才出现" —— 这是实测反馈里的第二个问题）
-    if(d.type==='alerts'){
-      const list = d.alerts||[];
-      renderAlerts(list, false);
-      $('#alert-count').textContent = list.length
-        ? `已 ${list.length} 条 · 分析到第 ${d.index||'?'}/${d.total||'?'} 个窗口`
-        : `暂无告警 · 已分析 ${d.index||0}/${d.total||'?'} 个窗口`;
+  currentJob=jid;if(es)es.close();
+  const source=new EventSource(`/api/job/${jid}/stream`);es=source;
+  let connectionWarned=false;
+  source.onopen=()=>{if(es!==source)return;connectionWarned=false;};
+  source.onmessage=ev=>{
+    if(es!==source||currentJob!==jid)return;
+    const d=parseStreamEvent(ev);if(!d)return;
+    if(d.type==='window')addWindow(d,jid);
+    if(d.type==='hello'||d.type==='final'){
+      const summary=d.summary||{};
+      $('#job-bar').style.width=Math.round((summary.progress||0)*100)+'%';
+      if(summary.message)$('#job-msg').textContent=summary.message;
+      renderAlerts(summary.alerts||[],false);
+      speechHello(jid,summary.alerts||[],false);
+      if(['done','error','stopped'].includes(summary.state)){finishFile(summary);return;}
     }
-    if(d.type==='done'){
-      $('#job-bar').style.width='100%';
-      $('#job-msg').textContent = d.summary.message;
-      renderAlerts(d.summary.alerts||[], false);
-      flash('分析完成：' + (d.summary.alerts||[]).length + ' 条告警','ok');
-      es.close(); es=null;
-      $('#btn-detect').disabled=false; $('#btn-abort').disabled=true;
-    }
-    if(d.type==='error'){
-      $('#job-msg').textContent = '❌ ' + d.error;
-      flash('分析失败：'+d.error,'err');
-      es.close(); es=null;
-      $('#btn-detect').disabled=false; $('#btn-abort').disabled=true;
-    }
+    if(d.type==='alerts'){renderAlerts(d.alerts||[],false);speakAlerts(jid,d.alerts||[],false);}
+    if(d.type==='done'){finishFile(d.summary||{});flash(`分析完成：${alertStore.file.length} 条保留告警`,'ok');}
+    if(d.type==='error'){const message='分析失败：'+(d.error||'未知错误');finishFile({message});flash(message,'err');}
   };
-  es.onerror = ()=>{ if(es){ es.close(); es=null; flash('实时连接中断','err'); } };
+  source.onerror=()=>{
+    if(es!==source)return;
+    $('#job-msg').textContent='分析连接中断 · 正在自动重连';
+    if(!connectionWarned){flash('分析连接中断，正在自动重连','warn');connectionWarned=true;}
+    if(source.readyState===EventSource.CLOSED)finishFile({message:'分析连接已关闭，请重新开始分析'});
+  };
 }
-function addWindow(d, jid){
-  $('#job-bar').style.width = Math.round(d.progress*100)+'%';
-  $('#job-msg').textContent = `推理中 ${d.index}/${d.total}　${d.t_start}s–${d.t_end}s`
-    + (d.latency?`　${d.latency.toFixed(1)}s`:'');
-  const hits = d.hits||[];
-  const div = document.createElement('div');
-  div.className = 'act' + (hits.length?' hit':'');
-  div.innerHTML = `<div class="top">
-      <span class="t">${d.t_start}s – ${d.t_end}s</span>
-      ${d.latency?`<span>${d.latency.toFixed(1)}s</span>`:''}
-      ${hits.map(x=>`<span class="tag">${x.name} ${(x.confidence*100).toFixed(0)}%</span>`).join('')}
-      ${d.error?`<span style="color:var(--err)">${d.error}</span>`:''}
-    </div>
-    <div class="row" style="align-items:flex-start;gap:14px;flex-wrap:nowrap">
-      <img class="thumb" src="${frameThumbUrl(jid, d)}"
-           loading="lazy" onclick="this.classList.toggle('big')"
-           title="本窗口的中间一帧；点击放大">
-      <div style="flex:1;min-width:0">
-        <div style="font-size:13px">${d.scene||'<span class="muted">（无场景描述）</span>'}</div>
-        ${(d.people||[]).map(p=>`<div class="person"><span class="pin">·</span>
-           <div class="body"><div class="doing">${p.action||''}</div>
-           <div class="where">${p.where||''}</div></div></div>`).join('')}
-        ${hits.map(x=>x.observable?
-          `<div class="muted" style="margin-top:5px;font-size:12px">证据：${x.observable}</div>`:'').join('')}
-      </div></div>`;
-  $('#windows').prepend(div);
+function addWindow(d,jid){
+  $('#job-bar').style.width=Math.round((d.progress||0)*100)+'%';
+  $('#job-msg').textContent=`分析中 ${d.index||'—'}/${d.total||'—'} · ${d.t_start}s–${d.t_end}s`+(d.latency?` · ${Number(d.latency).toFixed(1)}s`:'');
+  $('#windows').querySelectorAll('.empty-state').forEach(el=>el.remove());
+  $('#windows').prepend(windowCard(d,jid));
+  while($('#windows').children.length>200)$('#windows').lastChild.remove();
 }
-function renderAlerts(alerts, mon){
-  const box = mon ? '#m-alerts' : '#alerts';
-  if(!mon) $('#alert-count').textContent = alerts.length ? `（${alerts.length} 条）` : '';
-  if(!alerts.length){
-    $(box).innerHTML = '<span class="muted">未发现确认的不文明行为。'
-      + (mon?'':'时序平滑要求同一行为在多个窗口重复出现才升级为告警。')+'</span>';
+async function loadVideoLibrary(){
+  if(qaPending)return;
+  const selected=$('#qa-video').value;
+  try{
+    const response=await api('/api/videos');qaVideos=Array.isArray(response.videos)?response.videos:[];
+    $('#qa-video').replaceChildren();
+    if(!qaVideos.length){const option=new Option('暂无已分析视频，请先完成一次视频文件分析','');$('#qa-video').append(option);}
+    for(const video of qaVideos){$('#qa-video').append(new Option(`${video.filename} · ${video.archived_windows??video.windows_seen} 窗口${video.use_mock?' · 演示记录':''}`,video.video_id));}
+    if(qaVideos.some(v=>v.video_id===selected))$('#qa-video').value=selected;
+    selectQaVideo();
+  }catch(e){$('#qa-status').textContent='读取分析记录失败：'+e.message;}
+  finally{updateControls();}
+}
+function selectQaVideo(){
+  const video=qaVideos.find(v=>v.video_id===$('#qa-video').value),player=$('#qa-player');
+  if(!video){$('#qa-video-info').textContent='先在视频文件分析页上传并完成分析，再到这里提问。';player.style.display='none';player.removeAttribute('src');return;}
+  $('#qa-video-info').textContent=`${video.filename} · ${video.archived_windows??video.windows_seen} 个分析窗口 · ${video.use_mock?'历史结论为演示数据，问答将依据真实画面':'问答会重新查看实际画面'}${video.source_available?'':' · 原视频已清理，仅使用保留的证据帧'}${video.archive_error?' · '+video.archive_error:''}`;
+  player.style.display=video.source_available?'block':'none';
+  const source=`/api/videos/${encodeURIComponent(video.video_id)}/source`;
+  player.poster=`/api/videos/${encodeURIComponent(video.video_id)}/frames/f_0?revision=${encodeURIComponent(video.analysis_revision||'')}`;
+  player.onerror=()=>{if(player.error&&player.error.code!==1)$('#qa-status').textContent='浏览器无法播放此原视频，仍可向 AI 提问并打开证据帧。';};
+  if(video.source_available&&player.getAttribute('src')!==source)player.src=source;
+  if(!video.source_available){player.pause();player.removeAttribute('src');}
+}
+$('#qa-video').onchange=()=>{selectQaVideo();$('#qa-answers').replaceChildren();$('#qa-status').textContent='';updateControls();};
+$('#qa-refresh').onclick=()=>loadVideoLibrary();
+$('#qa-ask').onclick=async()=>{
+  const jid=$('#qa-video').value,question=$('#qa-question').value.trim();
+  if(!jid||!question)return flash('请选择视频并填写问题','err');
+  if(qaPending)return;qaPending=true;updateControls();$('#qa-status').textContent='正在检索相关画面并交给大模型判断…';
+  try{
+    const answer=await api(`/api/videos/${encodeURIComponent(jid)}/ask`,{method:'POST',timeoutMs:330000,headers:{'Content-Type':'application/json'},body:JSON.stringify({question})});
+    const card=document.createElement('div');card.className='card';
+    card.innerHTML=`<h3>${esc(question)}</h3><p style="white-space:pre-wrap">${esc(answer.answer)}</p><div class="row" style="align-items:flex-start;flex-wrap:wrap">${(answer.citations||[]).map((ref,i)=>`<div style="flex:1 1 180px;max-width:320px;min-width:0"><img data-ref="${i}" src="${esc(ref.image_url)}" alt="${esc(ref.description)}" tabindex="0" role="button" style="width:100%;height:160px;object-fit:contain;background:#102530;cursor:zoom-in;border-radius:8px"><button class="btn ghost sm" data-seek="${i}" style="margin:8px 0">${Number(ref.time_sec).toFixed(2)} 秒 · 抽样第 ${esc(ref.sample_number)} 帧</button><div class="muted">${esc(ref.description)}${ref.recovered?'（从原视频恢复）':''}</div></div>`).join('')}</div><p class="muted" style="margin-top:12px">${esc(answer.limitations||'基于本次提供的抽样画面，不代表逐帧完整检查。')}</p>${(answer.warnings||[]).length?`<div class="note warn">${answer.warnings.map(esc).join('；')}</div>`:''}<div class="muted">${esc(answer.model||'部署的大模型')} · 本次查看 ${esc(answer.sampled_frames)} 张画面${answer.roundtrip_sec?' · '+Number(answer.roundtrip_sec).toFixed(1)+' 秒':''}</div>`;
+    card.querySelectorAll('img[data-ref]').forEach(img=>{img.onclick=()=>openImageViewer(img);img.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openImageViewer(img);}};});
+    card.querySelectorAll('button[data-seek]').forEach(button=>{button.onclick=()=>{const player=$('#qa-player');if(player.style.display==='none')return flash('原视频已清理，请点击证据帧查看画面','warn');player.currentTime=Number(answer.citations[Number(button.dataset.seek)].time_sec);player.scrollIntoView({block:'center',behavior:'smooth'});};});
+    $('#qa-answers').prepend(card);while($('#qa-answers').children.length>10)$('#qa-answers').lastChild.remove();$('#qa-status').textContent='回答已完成，点击证据帧查看完整画面。';
+  }catch(e){$('#qa-status').textContent='问答失败：'+e.message;flash(e.message,'err');}
+  finally{qaPending=false;updateControls();}
+};
+function alertSource(a){return a.source==='ai_risk'||String(a.behavior_id||'').startsWith('ai_risk:')?'ai_risk':'configured';}
+function filteredAlerts(mon){
+  const prefix=mon?'m':'f',list=alertStore[mon?'monitor':'file'];
+  const source=$(`#${prefix}-alert-source`).value,severity=$(`#${prefix}-alert-severity`).value;
+  return list.filter(a=>(source==='all'||alertSource(a)===source)&&(severity==='all'||a.severity===severity));
+}
+function renderAlerts(alerts,mon){
+  alertStore[mon?'monitor':'file']=Array.isArray(alerts)?alerts:[];
+  if(mon)$('#mm-alerts').textContent=alertStore.monitor.length;
+  paintAlerts(mon);
+}
+function paintAlerts(mon){
+  const box=mon?'#m-alerts':'#alerts',prefix=mon?'m':'f';
+  const retained=alertStore[mon?'monitor':'file'].length, visible=filteredAlerts(mon);
+  $(mon?'#m-alert-count':'#alert-count').textContent=`${visible.length} / ${retained} 条`;
+  $(`#${prefix}-alert-export`).disabled=!visible.length;
+  if(!visible.length){
+    $(box).innerHTML=emptyState(retained?'当前筛选下没有告警':'暂无需要关注的告警',retained?'调整来源或风险等级，查看其他告警。':'AI 会结合可见证据与告警策略判断，后续结果会自动更新。','✓');
     return;
   }
-  $(box).innerHTML = alerts.map(a=>`
-    <div class="alert">
-      <div class="t">${a.behavior_name}
-        <span class="tag sev-${a.severity}">${a.severity}</span></div>
-      <div class="meta">${a.t_start}s – ${a.t_end}s ·
-        命中 ${a.hits}/${a.span} · 置信度 ${(a.max_confidence*100).toFixed(0)}%
-        ${a.person_desc?' · '+a.person_desc:''}</div>
-      ${a.reason?`<div class="reason">🤖 ${a.reason}</div>`:''}
-      ${(a.evidences||[]).map(e=>`<div class="ev">· ${e}</div>`).join('')}
-    </div>`).join('');
+  $(box).innerHTML=visible.slice().reverse().map(a=>{
+    const source=alertSource(a),severity=severityLabels[a.severity]?a.severity:'medium';
+    return `<article class="alert ${severity}"><div class="t">${esc(a.behavior_name||'现场风险')}<span class="tag sev-${severity}">${severityLabels[severity]}</span><span class="tag ${source==='ai_risk'?'risk-source':'rule-source'}">${source==='ai_risk'?'AI 风险':'配置行为'}</span></div><div class="meta">${esc(a.t_start)}s – ${esc(a.t_end)}s · ${a.hits!=null&&a.span!=null?`命中 ${esc(a.hits)}/${esc(a.span)} · `:''}置信度 ${confidenceText(a.max_confidence??a.confidence)}${a.person_desc?' · '+esc(a.person_desc):''}</div>${a.reason?`<div class="reason"><b>判断理由</b> · ${esc(a.reason)}</div>`:''}${(Array.isArray(a.evidences)?a.evidences:[]).map(e=>`<div class="ev">可见证据 · ${esc(e)}</div>`).join('')}</article>`;
+  }).join('');
 }
+function exportAlerts(mon){
+  const alerts=filteredAlerts(mon);if(!alerts.length)return;
+  const prefix=mon?'m':'f';
+  const result={exported_at:new Date().toISOString(),job_id:mon?monJob:currentJob,source_filter:$(`#${prefix}-alert-source`).value,severity_filter:$(`#${prefix}-alert-severity`).value,retained_alert_count:alertStore[mon?'monitor':'file'].length,exported_alert_count:alerts.length,note:'当前任务仍保留的告警；筛选仅影响展示与本次导出。持续监测最多保留最近 500 条。',alerts};
+  const url=URL.createObjectURL(new Blob([JSON.stringify(result,null,2)],{type:'application/json;charset=utf-8'}));
+  const link=document.createElement('a');link.href=url;link.download=`zhixun-${mon?'monitor':'video'}-alerts-${Date.now()}.json`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  flash(`已导出 ${alerts.length} 条告警`,'ok');
+}
+$('#m-alert-source').onchange=()=>paintAlerts(true);
+$('#m-alert-severity').onchange=()=>paintAlerts(true);
+$('#f-alert-source').onchange=()=>paintAlerts(false);
+$('#f-alert-severity').onchange=()=>paintAlerts(false);
+$('#m-alert-export').onclick=()=>exportAlerts(true);
+$('#f-alert-export').onclick=()=>exportAlerts(false);
 
+function saveSessionJob(kind,jid){
+  try{if(jid)sessionStorage.setItem('zhixun-'+kind,jid);else sessionStorage.removeItem('zhixun-'+kind);}catch(e){}
+}
+async function restoreSessionJobs(){
+  for(const kind of ['monitor','file']){
+    let jid;try{jid=sessionStorage.getItem('zhixun-'+kind);}catch(e){}if(!jid)continue;
+    try{
+      const summary=await api('/api/job/'+encodeURIComponent(jid));
+      const mon=kind==='monitor';
+      const active=['capturing','running','queued'].includes(summary.state);
+      if(mon){
+        monJob=jid;monitorRunning=active;clearMonitorHistory();$('#m-feed').innerHTML='';$('#m-mock').checked=!!summary.use_mock;
+        $('#m-scene').value=summary.mock_scene||'';$('#m-scene').style.display=summary.use_mock?'':'none';
+        if(summary.use_mock){$('#m-why').style.display='none';$('#m-warn').style.display='block';$('#m-warn').innerHTML='<b>已恢复演示任务</b>：当前识别结论为模拟数据，用于验证流程。';}
+      }
+      else{
+        uploadedJob=jid;currentJob=jid;fileRunning=active;clearFileHistory();$('#f-mock').checked=!!summary.use_mock;$('#up-info').textContent=summary.filename||'已恢复当前任务';
+        $('#f-scene').value=summary.mock_scene||'';$('#f-scene').style.display=summary.use_mock?'':'none';$('#f-mock-note').style.display=summary.use_mock?'block':'none';$('#f-loop').checked=!!summary.loop;
+      }
+      const records=(summary.window_results||[]).slice(mon?-60:-200);
+      if(records.length && !mon) $('#windows').innerHTML='';
+      records.forEach((record,i)=>{
+        const d={...record,index:i+1,cumulative:(summary.windows_seen||records.length)-records.length+i+1,progress:summary.progress};
+        d.hits=Object.entries(record.violations||{}).filter(([,v])=>v.violation).map(([id,v])=>({name:(summary.alerts||[]).find(a=>a.behavior_id===id)?.behavior_name||id,...v}));
+        if(mon)addAction(d,jid);else $('#windows').prepend(windowCard(d,jid));
+      });
+      if(!records.length && mon) $('#m-feed').innerHTML=emptyState('等待观察记录','监测正在采集画面，分析结果会逐条显示。');
+      if(mon){$('#mm-win').textContent=summary.windows_seen||summary.windows_done||0;$('#m-msg').textContent=summary.message||'已恢复监测';}
+      else $('#job-msg').textContent=summary.message||'已恢复分析';
+      renderAlerts(summary.alerts||[],mon);
+      if(active){if(mon){streamMonitor(jid);startLiveView(jid);}else streamJob(jid);}
+      else saveSessionJob(kind,null);
+    }catch(e){saveSessionJob(kind,null);flash('无法恢复上次任务：'+e.message,'warn');}
+  }
+  restoringJobs=false;updateControls();
+}
 /* 告警策略 */
 async function loadAgg(){
   try{
@@ -1169,18 +1222,21 @@ async function loadAgg(){
     if(a.mode) $('#agg-mode').value = a.mode;
     if(a.dedup_sec!=null) $('#agg-dedup').value = a.dedup_sec;
     if(a.min_confidence!=null) $('#agg-conf').value = a.min_confidence;
+    $('#agg-open-risks').checked=a.open_risks!==false;
     $('#agg-msg').textContent =
-      `当前：${a.mode} · 去抖 ${a.dedup_sec}s · 置信度下限 ${a.min_confidence}`;
+      `当前：${({ai:'AI 判断',immediate:'立即告警',smoothed:'时序平滑'}[a.mode]||a.mode)} · 去抖 ${a.dedup_sec}s · 置信度下限 ${a.min_confidence} · 开放风险${a.open_risks===false?'关闭':'开启'}`;
   }catch(e){}
 }
 $('#btn-agg').onclick = async ()=>{
+  const dedup=Number($('#agg-dedup').value),confidence=Number($('#agg-conf').value);
+  if(!Number.isFinite(dedup)||dedup<0||dedup>3600||!Number.isFinite(confidence)||confidence<0||confidence>1)return flash('去抖需为 0–3600 秒，置信度需为 0–1','err');
   try{
     const r = await api('/api/aggregate/config',{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({mode:$('#agg-mode').value,
-        dedup_sec:parseFloat($('#agg-dedup').value),
-        min_confidence:parseFloat($('#agg-conf').value)})});
-    flash('已切换到「'+r.aggregate.mode+'」，重跑检测生效','ok'); loadAgg(); refresh();
+        dedup_sec:dedup,
+        min_confidence:confidence,open_risks:$('#agg-open-risks').checked})});
+    flash('告警策略已更新，持续监测下一批生效；视频文件重新分析后生效','ok'); loadAgg(); refresh();
   }catch(e){ flash('设置失败：'+e.message,'err'); }
 };
 
@@ -1195,7 +1251,7 @@ $('#btn-save').onclick = async ()=>{
     const r = await api('/api/behaviors/raw',{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({text:$('#yaml-box').value})});
-    flash(`已保存，启用 ${r.enabled} 项` + (r.pushed?'，已热推给模型':''),'ok'); refresh();
+    flash(`已保存，启用 ${r.enabled} 项` + (r.pushed?'，下一次分析交给模型生效':''),'ok'); refresh();
   }catch(e){ flash('保存失败：'+e.message,'err'); }
 };
 $('#btn-prompt').onclick = async ()=>{
@@ -1247,8 +1303,13 @@ document.addEventListener('visibilitychange', async ()=>{
 });
 
 /* 启动 */
-loadYaml(); refresh(); loadAgg();
-setInterval(refresh, 5000);
+document.querySelector('aside button.active').setAttribute('aria-current','page');
+$('#m-src').setAttribute('aria-describedby','m-probe-msg');
+$('#m-probe-msg').setAttribute('aria-live','polite');
+$('#job-msg').setAttribute('role','status');$('#m-msg').setAttribute('role','status');
+updateDelayEstimate();updateControls();
+loadYaml();refresh();loadAgg();restoreSessionJobs();
+setInterval(refresh,5000);
 </script>
 </body>
 </html>

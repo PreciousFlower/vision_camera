@@ -170,7 +170,9 @@ def main() -> int:
                 parsed={"scene": "工地", "people": [{"where": "中", "action": "吸烟"}],
                         "violations": {b.id: {"violation": b.id == "smoking",
                                               "confidence": 0.95 if b.id == "smoking" else 0.0,
-                                              "observable": "口鼻有烟", "alert": True,
+                                              "observable": "可辨烟支送至嘴唇并吸入，口鼻有烟雾呼出",
+                                              "evidence": {key: 1 for key in b.evidence_checks},
+                                              "alert": True,
                                               "alert_reason": "证据充分"}
                                        for b in BS.enabled}},
                 backend="cluster"))

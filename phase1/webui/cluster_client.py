@@ -24,12 +24,15 @@
 from __future__ import annotations
 
 import os
+import json
 import re
 import select
 import socket
 import sys
 import threading
 import time
+import tempfile
+import shutil
 from pathlib import Path
 
 # Linux 上的 select 没有 EPOLL 之外的问题；Windows 上 select 只支持 socket，
@@ -39,6 +42,29 @@ _POLL_TIMEOUT = 30.0
 
 class ClusterError(RuntimeError):
     pass
+
+
+def deploy_service_package(client, local_root: Path, behaviors: dict) -> None:
+    """Upload the current service source and definitions before allocating a GPU."""
+    with tempfile.TemporaryDirectory(prefix="civility-service-") as directory:
+        package = Path(directory) / "pkg"
+        package.mkdir()
+        for name in ("civility", "cluster"):
+            shutil.copytree(local_root / name, package / name,
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        (package / "behaviors.json").write_text(json.dumps(behaviors, ensure_ascii=False), encoding="utf-8")
+        errors = client.upload_tree(package, client.workdir + "/pkg")
+        if errors:
+            raise ClusterError("推理代码上传失败：" + "; ".join(errors[:3]))
+        # The submission entry point lives outside pkg; update it from the same source.
+        conn, sftp = client.sftp()
+        try:
+            client.mkdirs(client.workdir + "/cluster", client.workdir + "/logs")
+            sftp.put(str(local_root / "cluster/serve-vlm.sbatch"),
+                     client.workdir + "/cluster/serve-vlm.sbatch")
+        finally:
+            sftp.close()
+            conn.close()
 
 
 def _tools_dir() -> str:
@@ -111,6 +137,7 @@ class ClusterClient:
         local_dir = Path(local_dir)
         c, sftp = self.sftp()
         failed: list[str] = []
+        directories = {remote_dir}
         try:
             self.run(f"mkdir -p {remote_dir}", timeout=60)
             for p in sorted(local_dir.rglob("*")):
@@ -120,7 +147,16 @@ class ClusterClient:
                 target = f"{remote_dir}/{rel}"
                 parent = target.rsplit("/", 1)[0]
                 try:
-                    self.run(f"mkdir -p {parent}", timeout=60)
+                    relative_parent = p.parent.relative_to(local_dir)
+                    current = remote_dir
+                    for component in relative_parent.parts:
+                        current += "/" + component
+                        if current not in directories:
+                            try:
+                                sftp.mkdir(current)
+                            except OSError:
+                                sftp.stat(current)  # Existing directories are fine; access failures are not.
+                            directories.add(current)
                     sftp.put(str(p), target)
                 except Exception as e:
                     failed.append(f"{rel}: {e}")
@@ -131,6 +167,7 @@ class ClusterClient:
                     except Exception:
                         pass
                     c, sftp = self.sftp()
+                    directories = {remote_dir}
         finally:
             try:
                 sftp.close()
@@ -319,7 +356,9 @@ class Tunnel:
             chan = self._transport.open_channel(
                 "direct-tcpip", (self.node, self.remote_port), addr
             )
-            conn.setblocking(False)
+            # select retains the existing read-idle timeout; writes must wait
+            # for a slow receiver instead of dropping a partial HTTP response.
+            conn.settimeout(_POLL_TIMEOUT)
             while self._running:
                 r, _, _ = select.select([conn, chan], [], [], _POLL_TIMEOUT)
                 if not r:
@@ -355,6 +394,9 @@ class ServiceSession:
     按钮对应 start() / stop()。
     """
 
+    class StartCancelled(ClusterError):
+        """The user stopped this session while its startup was in progress."""
+
     def __init__(self, client: ClusterClient, model: str, port: int = 18080,
                  exclude: str = "gpu8002,gpu8003,gpu8012", extra_sbatch: str = ""):
         self.client = client
@@ -369,59 +411,103 @@ class ServiceSession:
         self.message = ""
         self.started_at: float | None = None
         self.log_tail = ""
+        self._stop_event = threading.Event()
+        self._lifecycle_lock = threading.RLock()
+        self._stop_lock = threading.Lock()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._stop_event.is_set()
+
+    def _raise_if_cancelled(self) -> None:
+        if self.cancelled:
+            raise self.StartCancelled("服务启动已取消")
+
+    def _set_start_state(self, state: str) -> None:
+        with self._lifecycle_lock:
+            self._raise_if_cancelled()
+            self.state = state
 
     # ── 启动 ──
     def start(self, wait_ready_sec: int = 900, progress=None) -> None:
+        try:
+            self._start(wait_ready_sec=wait_ready_sec, progress=progress)
+        except Exception as exc:
+            if not self.cancelled:
+                raise
+            # A submit/tunnel operation can return after stop() has completed.
+            # Clean up its newly returned resources, without sweeping another
+            # session's jobs, before reporting cancellation to the caller.
+            self.stop(sweep_orphans=False)
+            raise self.StartCancelled("服务启动已取消") from exc
+
+    def _start(self, wait_ready_sec: int = 900, progress=None) -> None:
         def note(msg: str) -> None:
-            self.message = msg
+            with self._lifecycle_lock:
+                self._raise_if_cancelled()
+                self.message = msg
             if progress:
                 progress(msg)
             print(f"[session] {msg}", flush=True)
 
-        self.state = "submitting"
+        self._set_start_state("submitting")
         note("提交计算节点作业…")
-        # VLM_WORKERS：同一张卡上跑几个推理 worker（网关轮询分摊请求）。
-        # 单窗口推理要 10~12 秒，多 worker 直接把"结论来得慢"摊薄，
-        # 而计费不变（还是一张卡）。见 cluster/serve-vlm.sbatch 的说明。
-        workers = int(os.environ.get("VLM_WORKERS", "3") or 3)
-        self.jobid = self.client.submit(
+        # Small live batches should reach one model together; replicas on the
+        # same GPU split batch=2 into two batch=1 calls and compete for compute.
+        # VLM_WORKERS remains an explicit override for larger offline workloads.
+        workers = int(os.environ.get("VLM_WORKERS", "1") or 1)
+        jobid = self.client.submit(
             "cluster/serve-vlm.sbatch",
             extra=f'--export=ALL,MODEL={self.model},PORT={self.port},'
-                  f'VLM_WORKERS={workers}',
+                  f'VLM_WORKERS={workers} {self.extra_sbatch}',
         )
-        self.started_at = time.time()
+        with self._lifecycle_lock:
+            # Retain the returned id even if stop happened during submission;
+            # the cancellation handler must release this otherwise orphaned job.
+            self.jobid = jobid
+            self.started_at = time.time()
+            self._raise_if_cancelled()
         note(f"作业 {self.jobid} 已提交")
 
         # 等 RUNNING 并拿到节点名
         t0 = time.time()
-        self.state = "pending"
+        self._set_start_state("pending")
         while time.time() - t0 < wait_ready_sec:
+            self._raise_if_cancelled()
             st, node = self.client.job_state(self.jobid)
+            self._raise_if_cancelled()
             if st in ("RUNNING", "COMPLETING") and node:
                 self.node = node.split(",")[0]
                 note(f"运行在 {self.node}（状态 {st}）")
                 break
             if st in ("FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "OUT_OF_MEMORY"):
-                self.state = "error"
+                self._set_start_state("error")
                 self.log_tail = self.client.tail_log(self.jobid, "err")
                 raise ClusterError(f"作业 {self.jobid} 失败（{st}）\n{self.log_tail[:2000]}")
             if st == "":
-                self.state = "error"
+                self._set_start_state("error")
                 self.log_tail = self.client.tail_log(self.jobid, "err")
                 raise ClusterError(f"作业 {self.jobid} 已不在队列且未运行\n{self.log_tail[:2000]}")
             if progress and int(time.time() - t0) % 20 < 2:
                 note(f"排队中…（{st}，{int(time.time() - t0)}s）")
-            time.sleep(8)
+            self._stop_event.wait(8)
         else:
-            self.state = "error"
+            self._set_start_state("error")
             raise ClusterError(f"等待作业启动超时（{wait_ready_sec}s）")
 
-        self.state = "running"
+        self._set_start_state("running")
 
         # 等模型加载完：轮询服务健康检查（先建隧道才能问）
         note("建立两级隧道…")
-        self.tunnel = Tunnel(self.client, self.node, self.port)
-        local_port = self.tunnel.start()
+        with self._lifecycle_lock:
+            self._raise_if_cancelled()
+            tunnel = Tunnel(self.client, self.node, self.port)
+            self.tunnel = tunnel
+        local_port = tunnel.start()
+        if self.cancelled:
+            # stop() may already have detached the tunnel while start() waited.
+            tunnel.stop()
+            self._raise_if_cancelled()
         note(f"隧道就绪 127.0.0.1:{local_port} → {self.node}:{self.port}")
 
         note("等待模型加载（首次需从 /ssdfs 读 8.3GB 权重）…")
@@ -429,16 +515,18 @@ class ServiceSession:
         import requests
 
         while time.time() - t1 < 900:
+            self._raise_if_cancelled()
             try:
-                r = requests.get(f"{self.tunnel.base_url()}/health", timeout=20)
+                r = requests.get(f"{tunnel.base_url()}/health", timeout=20)
+                self._raise_if_cancelled()
                 info = r.json()
                 if info.get("ready"):
-                    self.state = "ready"
+                    self._set_start_state("ready")
                     note(f"模型就绪：{info.get('model')} @ {info.get('device')}"
                          f"（加载 {info.get('load_sec')}s）")
                     return
                 if info.get("error"):
-                    self.state = "error"
+                    self._set_start_state("error")
                     raise ClusterError(f"模型加载失败：{info['error']}")
                 if progress:
                     note(f"加载中…（{info.get('loading') and '进行中' or '未开始'}）")
@@ -448,9 +536,9 @@ class ServiceSession:
                 # 服务还没起来时连接会被拒绝，这是正常的
                 if progress:
                     note(f"等待服务端口响应…（{type(e).__name__}）")
-            time.sleep(10)
+            self._stop_event.wait(10)
 
-        self.state = "error"
+        self._set_start_state("error")
         raise ClusterError("等待模型加载超时")
 
     # ── 使用 ──
@@ -485,7 +573,8 @@ class ServiceSession:
 
     def infer(self, frames_b64: list[str], labels: list[str],
               max_new_tokens: int = 512, few_shot: bool = False,
-              with_alert: bool = False, with_actions: bool = False) -> dict:
+              with_alert: bool = False, with_actions: bool = False,
+              with_risks: bool = False, behaviors: dict | None = None) -> dict:
         import requests
 
         payload = {
@@ -497,9 +586,14 @@ class ServiceSession:
             "with_alert": with_alert,
             # 让模型描述画面里每个人在做什么（摄像头监测页）
             "with_actions": with_actions,
+            # 检查预设行为以外、有可见证据的安全风险。
+            "with_risks": with_risks,
         }
+        if behaviors is not None:
+            payload["behaviors"] = behaviors
         r = None
         last_err: Exception | None = None
+        request_started = time.perf_counter()
         # ⚠️ 允许一次重试：多 worker 场景下，网关可能刚好把请求转发给
         #    一个正在重启/刚挂掉的 worker（实测遇到 ConnectionError:
         #    RemoteDisconnected，整批窗口全部失败）。重试一次能挡住这类
@@ -520,7 +614,33 @@ class ServiceSession:
             raise ClusterError(f"推理请求失败：{last_err}")
         if r.status_code != 200:
             raise ClusterError(f"推理失败 HTTP {r.status_code}: {r.text[:500]}")
-        return r.json()
+        result = r.json()
+        result["roundtrip_sec"] = round(time.perf_counter() - request_started, 3)
+        return result
+
+    def ask_video(self, frames_b64: list[str], question: str, evidence: list[dict], context: str) -> dict:
+        """Use the deployed VLM's dedicated visual QA protocol, without fake behavior definitions."""
+        import requests
+
+        health = self.health()
+        if health.get("video_qa_protocol") != 1:
+            raise ClusterError("当前模型服务尚未支持视频问答，请停止并重新启动推理服务以加载新版代码")
+        if health.get("ready") is not True:
+            raise ClusterError("模型尚未就绪，请稍后提问")
+        started = time.perf_counter()
+        try:
+            response = requests.post(f"{self.base_url()}/video-qa", json={
+                "frames": [{"b64": b} for b in frames_b64], "question": question,
+                "evidence": evidence, "context": context, "max_new_tokens": 768,
+            }, timeout=300)
+            response.raise_for_status()
+            result = response.json()
+        except (requests.exceptions.RequestException, ValueError) as exc:
+            raise ClusterError(f"视频问答请求失败：{type(exc).__name__}: {exc}") from exc
+        if not isinstance(result, dict) or result.get("error") or not result.get("parsed"):
+            raise ClusterError(str(result.get("error") if isinstance(result, dict) else "模型返回格式错误"))
+        result["roundtrip_sec"] = round(time.perf_counter() - started, 3)
+        return result
 
     def reload_behaviors(self, behaviors_json_path: str) -> None:
         import requests
@@ -543,11 +663,18 @@ class ServiceSession:
             所以停止时顺手扫一遍自己名下所有 civility-serve 作业，
             一并取消。只动自己启动的作业名，不碰别的。
         """
-        cancelled: list[str] = []
+        self._stop_event.set()
+        with self._stop_lock:
+            return self._stop(sweep_orphans=sweep_orphans)
 
-        if self.tunnel:
-            self.tunnel.stop()
+    def _stop(self, sweep_orphans: bool = True) -> list[str]:
+        cancelled: list[str] = []
+        with self._lifecycle_lock:
+            self.state = "stopping"
+            tunnel = self.tunnel
             self.tunnel = None
+        if tunnel:
+            tunnel.stop()
 
         if self.jobid:
             self.client.cancel(self.jobid)
@@ -562,10 +689,11 @@ class ServiceSession:
             except Exception:
                 pass   # 清理是尽力而为，不能因为连不上就报失败
 
-        self.state = "stopped"
-        self.message = ("已停止并释放计算节点"
-                        + (f"（含 {len(cancelled) - 1} 个遗留作业）"
-                           if len(cancelled) > 1 else ""))
+        with self._lifecycle_lock:
+            self.state = "stopped"
+            self.message = ("已停止并释放计算节点"
+                            + (f"（含 {len(cancelled) - 1} 个遗留作业）"
+                               if len(cancelled) > 1 else ""))
         return cancelled
 
     def status(self) -> dict:

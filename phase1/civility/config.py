@@ -6,7 +6,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+import re
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,22 @@ class Behavior:
     observable_cues: list[str] = field(default_factory=list)
     severity: str = "medium"
     enabled: bool = True
+    # Positive claims must cite a frame for every check. Empty = legacy/custom behavior.
+    evidence_checks: dict[str, str] = field(default_factory=dict)
+    evidence_sequence: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.evidence_checks, dict)
+                or any(not isinstance(k, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", k)
+                       or not isinstance(v, str) or not v.strip()
+                       for k, v in self.evidence_checks.items())):
+            raise ValueError(f"{self.id}: evidence_checks 必须是英文证据 ID 到非空说明的映射")
+        if (not isinstance(self.evidence_sequence, list)
+                or any(not isinstance(k, str) or k not in self.evidence_checks
+                       for k in self.evidence_sequence)
+                or len(set(self.evidence_sequence)) != len(self.evidence_sequence)
+                or len(self.evidence_sequence) == 1):
+            raise ValueError(f"{self.id}: evidence_sequence 需为空或包含至少两个不同的证据 ID")
 
     @property
     def is_usable(self) -> bool:
@@ -59,6 +76,10 @@ class BehaviorSet:
         return None
 
 
+def behavior_payload(bs: BehaviorSet) -> dict:
+    return {"defaults": dict(bs.defaults), "behaviors": [asdict(b) for b in bs.enabled]}
+
+
 def _read_yaml(path: Path) -> dict:
     import yaml  # 惰性导入，见文件头说明
 
@@ -70,7 +91,11 @@ def _read_yaml(path: Path) -> dict:
 
 def load_behaviors(path: str | Path | None = None) -> BehaviorSet:
     p = Path(path) if path else ROOT / "config" / "behaviors.yaml"
-    raw = _read_yaml(p)
+    return parse_behaviors(_read_yaml(p))
+
+
+def parse_behaviors(raw: dict) -> BehaviorSet:
+    """Validate a complete behavior document before persisting or using it."""
     items = []
     for b in raw.get("behaviors", []):
         items.append(
@@ -83,6 +108,8 @@ def load_behaviors(path: str | Path | None = None) -> BehaviorSet:
                 observable_cues=[str(x) for x in (b.get("observable_cues") or [])],
                 severity=str(b.get("severity", "medium")),
                 enabled=bool(b.get("enabled", True)),
+                evidence_checks=b.get("evidence_checks", {}),
+                evidence_sequence=b.get("evidence_sequence", []),
             )
         )
 

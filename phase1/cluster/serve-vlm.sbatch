@@ -31,12 +31,9 @@ VLM_PY=/share/home/u00009/apps/conda/envs/vlm/bin/python
 export MODEL_ROOT=${MODEL_ROOT:-/ssdfs/datahome/u00009/models}
 MODEL=${MODEL:-Qwen/Qwen3-VL-4B-Instruct}
 PORT=${PORT:-18080}
-# ── 同卡多 worker：一张卡跑多份模型，吞吐接近翻倍而**计费不变** ──
-# 依据：网关监听 PORT，把请求轮询分给 PORT+1 … PORT+WORKERS。
-#      4B 模型 bf16 约占 8~9GB，A800 有 80GB，放 3 份很宽裕。
-#      实测单窗口推理 10~12 秒，是"结论来得慢"的主因，多 worker 能直接摊薄它。
-# 想回退成单进程：起服务时传 VLM_WORKERS=1，或改这里的默认值。
-WORKERS=${VLM_WORKERS:-3}
+# 单 GPU 默认一份模型，让小批次集中计算；多份模型会拆散批次并争用 GPU。
+# 大批量离线任务仍可通过 VLM_WORKERS 显式启用多 worker。
+WORKERS=${VLM_WORKERS:-1}
 
 cd "$WORKDIR" || { echo "❌ 工作目录不存在: $WORKDIR"; exit 1; }
 mkdir -p logs
@@ -65,6 +62,9 @@ export HF_HUB_CACHE="$MODEL_ROOT/hf/hub"
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export TOKENIZERS_PARALLELISM=false
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-2}
+export MKL_NUM_THREADS=${MKL_NUM_THREADS:-2}
+export VLM_CPU_THREADS=${VLM_CPU_THREADS:-2}
 export CIVILITY_TOKEN="${CIVILITY_TOKEN:-}"
 
 if [ ! -f "$WORKDIR/pkg/behaviors.json" ]; then

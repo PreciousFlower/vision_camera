@@ -81,3 +81,19 @@ venv/
 *.swp
 Thumbs.db
 desktop.ini
+
+# 本机系统修复与个人配置备份，不属于项目源代码
+_codexpp_backup_*/
+fix_machinekeys.ps1
+machinekeys-fix-result.txt
+*.bak
+# 用户测试原视频和新生成的验证产物保留在本机
+test/
+phase1/runs/code-review-*/
+phase1/runs/features-*/
+phase1/runs/image-viewer-validation/
+phase1/runs/latency-*/
+phase1/runs/test-video-validation/
+phase1/runs/video_analyses/
+phase1/runs/optimization-*.log
+phase1/runs/optimization-*.png
