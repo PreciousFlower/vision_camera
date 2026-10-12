@@ -42,6 +42,7 @@ def main():
         page.route("**/*", respond)
         page.goto("http://features.test/", wait_until="networkidle")
         page.wait_for_function("!runtimeOutdated&&!restoringJobs")
+        page.locator("#speech-voice").select_option("auto")
         page.locator("#speech-test").click()
         assert len(page.evaluate("window.spoken")) == 1
         page.evaluate("""() => {
@@ -55,7 +56,7 @@ def main():
         assert "吸烟" in page.evaluate("window.spoken[1]")
         page.evaluate("""() => {stream.onmessage({data:JSON.stringify({type:'hello',summary:{state:'running',alerts:[{behavior_id:'smoking',severity:'medium',t_start:2}]}})});} """)
         assert len(page.evaluate("window.spoken")) == 2
-        page.locator('aside button[data-tab="qa"]').click()
+        page.locator('aside button[data-tab="detect"]').click()
         page.wait_for_function("document.querySelector('#qa-video').value==='fixture'")
         page.locator("#qa-question").fill("哪一帧有人吸烟？")
         page.locator("#qa-ask").click()

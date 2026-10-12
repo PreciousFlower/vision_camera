@@ -67,12 +67,15 @@ from fastapi.responses import (  # noqa: E402
     HTMLResponse,
     JSONResponse,
     StreamingResponse,
+    Response,
 )
 
 from .cluster_client import ClusterClient, ClusterError, ServiceSession  # noqa: E402
 from .video_library import VideoLibrary  # noqa: E402
+from .speech_service import SpeechService, validate_speech  # noqa: E402
 
 QA_BUSY = threading.Lock()
+SPEECH = SpeechService()
 
 
 @functools.lru_cache(maxsize=8)
@@ -106,7 +109,7 @@ def runtime_source_signature() -> str:
     files = sorted((PROJECT / "civility").glob("*.py")) + sorted(
         (PROJECT / "cluster").glob("*.py")) + [
         Path(__file__), HERE / "cluster_client.py", HERE / "capture.py", HERE / "video_library.py",
-        HERE / "motion_highlights.py",
+        HERE / "motion_highlights.py", HERE / "speech_service.py",
         PROJECT / "cluster/serve-vlm.sbatch"]
     digest = hashlib.sha256()
     for path in files:
@@ -1681,6 +1684,21 @@ def create_app():
     def speech_script():
         return FileResponse(str(HERE / "static" / "alert_speech.js"), media_type="text/javascript")
 
+    @app.post("/api/speech/synthesize")
+    async def api_speech(body: dict):
+        try:
+            text, voice, rate = validate_speech(body)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        try:
+            audio = await SPEECH.synthesize(text, voice, rate)
+            return Response(audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+        except BlockingIOError as exc:
+            raise HTTPException(429, str(exc)) from exc
+        except Exception as exc:
+            # No alert content or provider internals in logs/responses.
+            raise HTTPException(503, "自然语音暂不可用，已改用浏览器系统声音") from exc
+
     # ── 已分析视频与可验证的视觉问答 ──
     def archived_video(video_id: str) -> tuple[VideoLibrary, dict]:
         library = video_library()
@@ -1723,6 +1741,54 @@ def create_app():
     def api_video(video_id: str):
         library, metadata = archived_video(video_id)
         return library.public(metadata)
+
+    @app.get("/api/videos/{video_id}/analysis")
+    def api_video_analysis(video_id: str):
+        library, metadata = archived_video(video_id)
+        try:
+            rows = library.windows(video_id)
+            names = {b.id: b.name for b in STATE.behaviors.behaviors}
+            visible = []
+            for index, row in enumerate(rows[-200:], start=max(0, len(rows) - 200) + 1):
+                # Expose the same presentation fields as a live window, no paths.
+                record = {key: row.get(key) for key in (
+                    "window_id", "t_start", "t_end", "frames", "frame_indices", "frame_labels",
+                    "scene", "people", "risks", "evidence_warnings", "verification", "error",
+                    "latency", "tokens_out", "sampling", "skipped")}
+                record["index"] = index
+                record["frames"] = row.get("frames") or len(row.get("frame_indices") or [])
+                record["archive_revision"] = metadata.get("analysis_revision", "")
+                record["hits"] = [{"behavior_id": bid, "name": names.get(bid, bid),
+                                   **{k: v.get(k) for k in ("confidence", "observable", "alert", "alert_reason")}}
+                                  for bid, v in (row.get("violations") or {}).items() if v.get("violation")]
+                visible.append(record)
+            return {**library.public(metadata), "window_results": visible,
+                    "displayed_windows": len(visible)}
+        except (OSError, ValueError) as exc:
+            raise HTTPException(404, "视频分析记录已删除或不可用") from exc
+
+    @app.delete("/api/videos/{video_id}")
+    def api_video_delete(video_id: str):
+        ensure_current_runtime()
+        if not QA_BUSY.acquire(blocking=False):
+            raise HTTPException(409, "视频问答正在处理，请等回答完成后删除")
+        try:
+            with STATE.lock:
+                library, metadata = archived_video(video_id)
+                removed = library.delete(video_id)
+                STATE.jobs.pop(video_id, None)
+                STATE.uploads.pop(video_id, None)
+            return {"ok": True, **removed,
+                    "message": "已删除该视频的本机分析记录、证据帧和独立上传副本"
+                    if not removed["source_retained"] else "已删除记录和证据帧；共享或迁移的视频文件予以保留"}
+        except HTTPException:
+            raise
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(409, "文件可能仍被播放器占用，删除未完成；请关闭播放后重试") from exc
+        finally:
+            QA_BUSY.release()
 
     @app.get("/api/videos/{video_id}/source")
     def api_video_source(video_id: str):
@@ -1854,6 +1920,8 @@ def create_app():
         with STATE.lock:
             previous = STATE.session
             previous_worker = getattr(previous, "_start_worker", None)
+            if previous and getattr(previous, "_release_pending", False):
+                raise HTTPException(409, "上次节点释放尚未确认，请先重试停止并释放节点")
             if previous and (previous.state in ("ready", "running", "pending", "submitting", "stopping")
                              or (previous_worker is not None and previous_worker.is_alive())):
                 raise HTTPException(400, "服务已在启动或运行中，请先停止")
@@ -1909,7 +1977,8 @@ def create_app():
             sess.state = "error"
             sess.message = f"{type(e).__name__}: {e}"
             raise HTTPException(500, sess.message) from e
-        return {"ok": True, "message": "已提交，正在启动（排队 + 加载模型可能要几分钟）"}
+        return {"ok": True, "message": "已提交，正在启动（排队 + 加载模型可能要几分钟）",
+                "service": sess.status()}
 
     @app.post("/api/service/stop")
     def api_service_stop():
@@ -1924,13 +1993,18 @@ def create_app():
                     cl.cancel(j["jobid"])
                 if orphans:
                     STATE.log_line(f"[服务] 清理了 {len(orphans)} 个遗留作业")
-                    return {"ok": True, "message": f"没有活动会话，已清理 {len(orphans)} 个遗留作业"}
+                    return {"ok": True, "message": f"没有活动会话，已清理 {len(orphans)} 个遗留作业", "service": {"state": "idle"}}
             except Exception as e:
                 STATE.log_line(f"[服务] 遗留作业清理失败：{e}")
-            return {"ok": True, "message": "没有在运行的服务"}
-        cancelled = session.stop()
+                raise HTTPException(503, "遗留作业清理失败，请检查连接后重试停止") from e
+            return {"ok": True, "message": "没有在运行的服务", "service": {"state": "idle"}}
+        try:
+            cancelled = session.stop()
+        except Exception as exc:
+            STATE.log_line(f"[服务] {session.message}")
+            raise HTTPException(503, session.message) from exc
         STATE.log_line(f"[服务] 已停止，取消作业 {cancelled}")
-        return {"ok": True, "message": session.message}
+        return {"ok": True, "message": session.message, "service": session.status()}
 
     @app.get("/api/service/health")
     def api_service_health():

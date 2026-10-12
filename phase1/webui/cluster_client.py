@@ -210,15 +210,27 @@ class ClusterClient:
         return out or ""
 
     def cancel(self, jobid: str) -> None:
+        if not re.fullmatch(r"[0-9]+(?:_[0-9]+)?", str(jobid)):
+            raise ClusterError("作业号无效，未执行释放命令")
         try:
-            self.run(f"scancel {jobid}", timeout=60)
-        except Exception:
-            pass
+            rc, _, _ = self.run(f"scancel {jobid}", timeout=20)
+            if rc == 0:
+                return
+            # An already-ended allocation is safe only if the scheduler
+            # independently confirms the job is absent.
+            check_rc, current, _ = self.run('squeue -h -u u00009 -o "%i"', timeout=20)
+            if check_rc == 0 and str(jobid) not in {line.strip() for line in current.splitlines()}:
+                return
+        except Exception as exc:
+            raise ClusterError("释放作业失败，请检查集群连接后重试") from exc
+        raise ClusterError(f"作业 {jobid} 尚未确认释放，请重试停止")
 
     def list_my_jobs(self) -> list[dict]:
         rc, out, _ = self.run(
-            'squeue -u u00009 -h -o "%i|%j|%T|%M|%N|%R" 2>/dev/null', timeout=60
+            'squeue -u u00009 -h -o "%i|%j|%T|%M|%N|%R" 2>/dev/null', timeout=20
         )
+        if rc != 0:
+            raise ClusterError("集群作业查询失败，不能确认作业已释放")
         jobs = []
         for line in (out or "").splitlines():
             parts = line.split("|")
@@ -414,6 +426,7 @@ class ServiceSession:
         self._stop_event = threading.Event()
         self._lifecycle_lock = threading.RLock()
         self._stop_lock = threading.Lock()
+        self._release_pending = False
 
     @property
     def cancelled(self) -> bool:
@@ -672,40 +685,56 @@ class ServiceSession:
     def _stop(self, sweep_orphans: bool = True) -> list[str]:
         cancelled: list[str] = []
         with self._lifecycle_lock:
+            if self.state == "stopped" and not self.jobid and self.tunnel is None and not self._release_pending:
+                return []
             self.state = "stopping"
+            self.message = "正在停止服务并释放计算节点…"
+            self._release_pending = True
             tunnel = self.tunnel
-            self.tunnel = None
-        if tunnel:
-            tunnel.stop()
-
-        if self.jobid:
-            self.client.cancel(self.jobid)
-            cancelled.append(self.jobid)
-
-        if sweep_orphans:
-            try:
+        try:
+            if tunnel:
+                tunnel.stop()
+                with self._lifecycle_lock:
+                    if self.tunnel is tunnel:
+                        self.tunnel = None
+            with self._lifecycle_lock:
+                jobid = self.jobid
+            if jobid:
+                self.client.cancel(jobid)
+                cancelled.append(jobid)
+                with self._lifecycle_lock:
+                    if self.jobid == jobid:
+                        self.jobid = None
+            if sweep_orphans:
                 for j in self.client.list_my_jobs():
                     if j.get("name") == "civility-serve" and j["jobid"] not in cancelled:
                         self.client.cancel(j["jobid"])
                         cancelled.append(j["jobid"])
-            except Exception:
-                pass   # 清理是尽力而为，不能因为连不上就报失败
+        except Exception as exc:
+            with self._lifecycle_lock:
+                self.state = "error"
+                self.message = f"停止或释放失败：{exc}。请重试停止并释放节点。"
+            raise
 
         with self._lifecycle_lock:
             self.state = "stopped"
+            self.node = None
+            self.started_at = None
+            self._release_pending = False
             self.message = ("已停止并释放计算节点"
                             + (f"（含 {len(cancelled) - 1} 个遗留作业）"
                                if len(cancelled) > 1 else ""))
         return cancelled
 
     def status(self) -> dict:
-        return {
-            "state": self.state,
-            "message": self.message,
-            "jobid": self.jobid,
-            "node": self.node,
-            "model": self.model,
-            "local_url": self.base_url() if self.tunnel else None,
-            "uptime_sec": round(time.time() - self.started_at, 1) if self.started_at else None,
-            "tunnel_alive": self.tunnel.alive if self.tunnel else False,
-        }
+        with self._lifecycle_lock:
+            worker = getattr(self, "_start_worker", None)
+            return {
+                "state": self.state, "message": self.message,
+                "jobid": self.jobid, "node": self.node, "model": self.model,
+                "local_url": self.base_url() if self.tunnel else None,
+                "uptime_sec": round(time.time() - self.started_at, 1) if self.started_at else None,
+                "tunnel_alive": self.tunnel.alive if self.tunnel else False,
+                "release_pending": self._release_pending,
+                "start_worker_alive": bool(worker and worker.is_alive()),
+            }

@@ -18,7 +18,7 @@
   --accent: #4b73a3;
   --accent2: #3e6490;
   --media-bg: #151515;
-  --ok: #404040;
+  --ok: #157347;
   --warn: #956009;
   --err: #b63832;
   --hit: #b63832;
@@ -42,8 +42,8 @@ header { height: 76px; padding: 0 30px; display: flex; align-items: center; gap:
 .top-label { font-size: 12px; color: var(--dim); margin-right: 14px; }
 .chip { font-size: 11px; padding: 5px 10px; border-radius: 5px; background: #fafafa; border: 1px solid var(--line); color: var(--fg2); display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .chip .dot { width: 5px; height: 5px; border-radius: 50%; background: #929292; }
-.chip.ok { color: #333; border-color: #dedede; background: #fafafa; }
-.chip.ok .dot { background: #333; }
+.chip.ok { color: var(--ok); border-color: #a8d5bc; background: #eaf7ef; font-weight: 600; }
+.chip.ok .dot { background: var(--ok); }
 .chip.err { color: var(--err); border-color: #ead1ce; background: #fff8f7; }
 .chip.err .dot { background: var(--err); }
 .chip.warn { color: #525252; border-color: #dedede; background: #fafafa; }
@@ -104,6 +104,9 @@ label.chk input { width: 14px; height: 14px; accent-color: var(--accent); cursor
 .speech-strip .row { gap: 13px; flex: 1; }
 .speech-strip #speech-status { margin-left: auto; font-size: 12px; max-width: 390px; }
 .speech-strip #speech-volume { width: 75px !important; }
+.speech-strip select { padding: 5px 8px; font-size: 12px; max-width: 200px; }
+.speech-options { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.speech-help { flex-basis: 100%; font-size: 11px; color: var(--dim); }
 .speech-icon { width: 17px; height: 17px; color: var(--accent); margin-right: 12px; flex: none; }
 .control-panel { display: grid; grid-template-columns: minmax(255px, 1fr) minmax(425px, 1.9fr); column-gap: 26px; padding: 22px 24px; }
 .control-panel > h3, .control-panel > .lead, .control-panel > .note, .control-panel > .bar, .control-panel > .kv, .control-panel > details { grid-column: 1/-1; }
@@ -143,11 +146,17 @@ code { background: #ededed; padding: 1px 5px; border-radius: 3px; font-size: 11p
 .freshness-item b { font-size: 14px; color: var(--fg2); font-variant-numeric: tabular-nums; font-weight: 500; }
 .freshness-foot { font-size: 11px; color: var(--dim); margin: 12px 0 0; line-height: 1.8; }
 .bar { height: 2px; background: #e9e9e9; border-radius: 999px; overflow: hidden; margin: 17px 0 9px; }
+#svc-bar.service-pending { animation: service-pulse 1.2s ease-in-out infinite; }
+@keyframes service-pulse { 50% { opacity: .4; } }
 .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .4s ease; }
 .feed { display: flex; flex-direction: column; gap: 0; max-height: 660px; overflow: auto; padding-right: 3px; }
 .act { border-bottom: 1px solid var(--line); padding: 22px 0; animation: slide .2s ease; }
 .act:first-child { padding-top: 3px; }
 .act:last-child { border-bottom: 0; padding-bottom: 0; }
+.act.hit { border-left: 3px solid var(--err); padding-left: 14px; }
+.act.alerted { background: #fff8f7; border-left: 3px solid var(--err); border-radius: 5px; padding-left: 14px; padding-right: 12px; }
+.tag.behavior-hit, .tag.alert-badge { color: #a82c25; background: #fdebe8; border: 1px solid #efbab4; font-weight: 600; }
+.tag.alert-badge { margin-left: auto; }
 .act .top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--dim); margin-bottom: 14px; }
 .act .top .t { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
 .person { display: flex; gap: 10px; align-items: flex-start; padding: 9px 0; border-top: 1px solid #efefef; }
@@ -166,11 +175,15 @@ code { background: #ededed; padding: 1px 5px; border-radius: 3px; font-size: 11p
 .scene-desc { font-size: 14px; color: var(--fg); margin-bottom: 10px; line-height: 1.85; }
 .risk-detail { margin-top: 11px; padding: 9px 12px; border-left: 2px solid #bdbdbd; background: #f6f6f6; font-size: 12px; line-height: 1.9; }
 .risk-detail strong { font-weight: 500; color: #333; }
+.risk-detail.behavior-hit { border-left-color: var(--err); background: #fff3f1; }
+.risk-detail.behavior-hit strong { color: #a82c25; font-weight: 600; }
+.alert .tag.rule-source, .alert .tag.risk-source { color: #a82c25; background: #fdebe8; }
+.flash.ok { border-left-color: var(--ok); color: var(--ok); }
 .risk-detail .risk-evidence { margin-top: 4px; color: var(--fg2); }
 .alert { border-bottom: 1px solid var(--line); border-left: 2px solid #d7d7d7; padding: 15px 14px; margin-bottom: 10px; background: #fafafa; animation: slide .2s ease; }
 .alert.high { border-left-color: #c35d55; }
 .alert.low { border-left-color: #aaa; }
-.alert .t { font-weight: 600; font-size: 13px; color: var(--fg); margin-bottom: 9px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.alert .t { font-weight: 600; font-size: 13px; color: #a82c25; margin-bottom: 9px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .alert .meta { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
 .alert .reason { font-size: 12px; color: var(--fg2); margin-top: 10px; padding-top: 9px; border-top: 1px solid #e7e7e7; line-height: 1.85; }
 .alert .ev { font-size: 12px; color: var(--dim); margin-top: 7px; }
@@ -249,6 +262,16 @@ section.active { display: block; animation: fade .2s ease; }
 .qa-workspace #qa-video { flex: 1; }
 .qa-workspace #qa-video-info { font-size: 12px; }
 .qa-workspace > p.muted { font-size: 12px; }
+.video-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 22px; align-items: start; }
+.video-workspace > .card { min-width: 0; }
+.video-workspace .drop { padding: 30px 18px; }
+.video-workspace .qa-workspace #qa-video { min-width: 0 !important; width: 100%; flex-basis: 100%; }
+.video-workspace #qa-player { max-height: 240px; }
+.workflow-step { display: inline-block; font-size: 11px; color: var(--accent2); margin-right: 10px; letter-spacing: 1px; }
+.video-delete-dialog { width: min(440px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 9px; padding: 25px; color: var(--fg); background: var(--panel); }
+.video-delete-dialog::backdrop { background: #0006; }
+.video-delete-dialog p { font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; margin: 14px 0; }
+.video-delete-dialog .row { justify-content: flex-end; }
 .yaml-editor { background: #fafafa !important; color: #333; }
 .service-controls select { flex: 1; }
 @media (min-width: 1700px) {
@@ -276,6 +299,7 @@ section.active { display: block; animation: fade .2s ease; }
   .speech-strip #speech-status { max-width: 255px; font-size: 11px; }
 }
 @media (max-width: 1050px) {
+  .video-workspace { grid-template-columns: 1fr; gap: 0; }
   .control-panel { display: block; }
   .control-panel > .row { margin-top: 17px !important; }
   .source-entry .source-controls { flex-wrap: nowrap; }
@@ -379,8 +403,7 @@ section.active { display: block; animation: fade .2s ease; }
 <aside aria-label="主导航">
   <div class="grp">工作空间</div>
   <button class="active" data-tab="monitor"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="13" height="14" rx="3"/><path d="m16 9 5-3v12l-5-3"/></svg></span>摄像头监测</button>
-  <button data-tab="detect"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m10 8 5 4-5 4z"/></svg></span>视频文件分析</button>
-  <button data-tab="qa"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 18 3 21v-5a7 7 0 0 1-1-4c0-5 4-9 10-9s10 4 10 9-4 9-10 9a11 11 0 0 1-7-3z"/><path d="M8 10h8M8 14h5"/></svg></span>视频问答</button>
+  <button data-tab="detect"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m10 8 5 4-5 4z"/></svg></span>视频分析</button>
   <div class="grp">系统管理</div>
   <button data-tab="service"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m13 2-8 12h7l-1 8 8-12h-7z"/></svg></span>推理服务</button>
   <button data-tab="behaviors"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3"/><rect x="9" y="2" width="6" height="5" rx="1"/><path d="M8 12h8M8 16h5"/></svg></span>行为定义</button>
@@ -396,22 +419,13 @@ section.active { display: block; animation: fade .2s ease; }
 <div class="speech-strip">
   <svg class="speech-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="m12 4-6 5H3v6h3l6 5zM16 8c2 2 2 6 0 8M19 5c4 4 4 10 0 14"/></svg>
   <div class="row"><label class="chk"><input type="checkbox" id="speech-enabled" checked> 告警语音播报</label>
+    <div class="speech-options"><label for="speech-voice">声音</label><select id="speech-voice"><option value="neural:xiaoxiao">自然女声 · 本机</option><option value="neural:yunxi">自然男声 · 本机</option><option value="auto">系统中文声音</option></select>
+    <label for="speech-rate">语速</label><select id="speech-rate"><option value="0.9">舒缓</option><option value="1" selected>标准</option><option value="1.1">稍快</option></select></div>
     <label for="speech-volume">音量</label><input id="speech-volume" type="range" min="0" max="1" step="0.1" value="1" style="width:100px">
     <button class="btn ghost sm" id="speech-test">试听音箱</button><span id="speech-status" class="muted" role="status">开始检测或试听后启用，使用当前浏览器的音箱</span>
+    <span class="speech-help">自然声音在本机生成，不占用服务器显卡；不可用时自动使用系统声音。</span>
   </div>
 </div>
-<section id="tab-qa">
-  <div class="page-heading"><div><div class="eyebrow">VIDEO QUESTIONS</div><h1>视频问答</h1><p>选择已分析的视频，询问画面、动作或发生时间，查看大模型引用的证据。</p></div></div>
-  <div class="card qa-workspace">
-    <h3>已分析视频</h3><div class="row"><select id="qa-video" aria-label="选择已分析视频" style="min-width:220px;max-width:100%"><option value="">正在读取分析记录…</option></select><button class="btn ghost sm" id="qa-refresh">刷新列表</button></div>
-    <div id="qa-video-info" class="muted" style="margin:10px 0">新完成的视频分析会保存为问答档案，重启后仍可选择。</div>
-    <video id="qa-player" controls preload="metadata" style="display:none;width:100%;max-height:360px;background:var(--media-bg)"></video>
-    <label class="f" style="margin-top:14px" for="qa-question">提问内容<textarea id="qa-question" rows="3" maxlength="2000" placeholder="例如：哪一帧有人吸烟？他在什么时候丢弃了什么？"></textarea></label>
-    <div class="row" style="margin-top:12px"><button class="btn" id="qa-ask">向 AI 提问</button><span id="qa-status" class="muted" role="status"></span></div>
-    <p class="muted" style="margin-top:12px">问答使用已部署的大模型重新查看抽样画面；引用时间对应抽样帧，不能保证穷尽视频中的每个动作。请先启动推理服务。</p>
-  </div>
-  <div id="qa-answers" aria-live="polite"></div>
-</section>
 <!-- 摄像头监测 -->
 <section id="tab-monitor" class="active">
   <div class="page-heading"><div><div class="eyebrow">LIVE MONITORING</div><h1>监测工作台</h1><p>接入摄像头，持续关注人物动作与现场风险。</p></div><div class="heading-badge"><i class="dot"></i>行为识别 · 风险研判</div></div>
@@ -526,9 +540,10 @@ section.active { display: block; animation: fade .2s ease; }
 
 <!-- 视频文件 -->
 <section id="tab-detect">
-  <div class="page-heading"><div><div class="eyebrow">VIDEO ANALYSIS</div><h1>视频文件分析</h1><p>逐窗口还原现场，查看行为、风险与告警依据。</p></div><div class="heading-badge"><i class="dot"></i>行为识别 · 风险研判</div></div>
-  <div class="card">
-    <h3>视频文件分析 <span class="hint">上传一段视频，逐窗口给出结论</span></h3>
+  <div class="page-heading"><div><div class="eyebrow">VIDEO ANALYSIS</div><h1>视频分析</h1><p>上传视频分析，查看告警与动作，再向 AI 提问。历史视频也能在这里继续查看。</p></div><div class="heading-badge"><i class="dot"></i>分析 · 证据 · 问答</div></div>
+  <div class="video-workspace">
+  <div class="card video-upload">
+    <h3><span class="workflow-step">01</span>上传并分析 <span class="hint">新视频从这里开始</span></h3>
     <div class="drop" id="drop" role="button" tabindex="0" aria-label="选择或拖入视频文件">
       <div class="upload-glyph" aria-hidden="true">↑</div>
       <div style="margin-top:10px;font-size:14px">点击选择视频，或拖拽文件到这里</div>
@@ -570,6 +585,20 @@ section.active { display: block; animation: fade .2s ease; }
       默认<b>跑完一遍就结束</b>；想反复看同一段画面请勾「循环播放」。
     </div>
   </div>
+
+  <div class="card qa-workspace">
+    <h3><span class="workflow-step">02</span>查看结果与提问</h3>
+    <div class="row"><select id="qa-video" aria-label="选择已分析视频"><option value="">正在读取分析记录…</option></select><button class="btn ghost sm" id="qa-refresh">刷新列表</button><button class="btn ghost danger sm" id="qa-delete" disabled>删除视频</button></div>
+    <div id="qa-video-info" class="muted" style="margin:10px 0">完成分析后自动选中视频，可以立即提问；历史记录重启后仍保留。</div>
+    <video id="qa-player" controls preload="metadata" style="display:none;width:100%;background:var(--media-bg)"></video>
+    <label class="f" style="margin-top:14px" for="qa-question">提问内容<textarea id="qa-question" rows="3" maxlength="2000" placeholder="例如：哪一帧有人吸烟？他什么时候丢弃了什么？"></textarea></label>
+    <div class="row" style="margin-top:12px"><button class="btn" id="qa-ask">向 AI 提问</button><span id="qa-status" class="muted" role="status"></span></div>
+    <div id="qa-model-note" class="note" style="margin-top:12px;display:none">历史结果可直接查看；提问需要先在「推理服务」启动模型。</div>
+    <p class="muted" style="margin-top:12px">AI 使用已部署的大模型查看相关画面，回答附有时间和证据帧。抽样分析可能遗漏短暂动作。</p>
+  </div>
+  </div>
+  <div id="qa-answers" aria-live="polite"></div>
+  <h2 id="video-results-title" style="font-size:18px;margin:8px 0 18px">分析结果</h2>
 
   <div class="card">
     <h3>告警判定策略 <span class="hint">持续监测下一批生效，无需重启模型</span></h3>
@@ -686,6 +715,12 @@ section.active { display: block; animation: fade .2s ease; }
   <div class="image-viewer-toolbar"><span id="image-viewer-title" class="image-viewer-title">完整画面</span><button id="image-viewer-close" class="btn sm" type="button" autofocus>关闭 · Esc</button></div>
   <img id="image-viewer-image" alt="">
 </dialog>
+<dialog id="video-delete-dialog" class="video-delete-dialog" aria-labelledby="video-delete-title">
+  <h3 id="video-delete-title">删除这个视频？</h3>
+  <p id="video-delete-name"></p>
+  <p>将清理本机保存的分析记录、证据帧和该视频的独立上传副本。此操作无法撤销，电脑上的原始文件不受影响。</p>
+  <div class="row"><button id="video-delete-cancel" class="btn ghost">保留视频</button><button id="video-delete-confirm" class="btn ghost danger">确认删除</button></div>
+</dialog>
 <div class="flashes" id="flashes" role="status" aria-live="polite" aria-atomic="false"></div>
 
 <script src="/static/alert_speech.js"></script>
@@ -699,16 +734,35 @@ let recheckTouched = false;
 let monitorStarting = false, monitorRunning = false, fileRunning = false, uploading = false;
 let serviceReady = false, refreshBusy = false, stateFailed = false, liveViewToken = 0, restoringJobs = true;
 let runtimeOutdated = true;
+let serviceAction=null, serviceEpoch=0, serviceRefreshQueued=false, serviceSnapshot={state:"idle"};
 const alertStore = {monitor:[], file:[]};
 const severityLabels = {high:'高风险', medium:'中风险', low:'低风险'};
-let qaPending=false, qaVideos=[];
+let qaPending=false, qaDeleting=false, historyLoading=false, qaVideos=[], libraryRequest=0, analysisRequest=0, deleteVideoId=null;
 const speech=new AlertSpeech({onStatus:text=>{$('#speech-status').textContent=text;}});
 const newSpeechRuns=new Set();
 try{$('#speech-enabled').checked=localStorage.getItem('civility-speech-enabled')!=='false';}catch(e){}
+let speechSettings={voice:'neural:xiaoxiao',rate:1,volume:1};
+try{const saved=JSON.parse(localStorage.getItem('civility-speech-settings')||'{}');if(saved&&typeof saved==='object')speechSettings={...speechSettings,...saved};}catch(e){}
+speech.configure(speechSettings);
+if(![.9,1,1.1].includes(speech.rate))speech.rate=1;
+$('#speech-rate').value=String(speech.rate);$('#speech-volume').value=String(speech.volume);
+function refreshSpeechVoices(){
+  const select=$('#speech-voice');select.querySelectorAll('[data-browser-voice]').forEach(option=>option.remove());
+  for(const voice of speech.synth?.getVoices()||[]){
+    if(!/^zh/i.test(voice.lang))continue;
+    const option=new Option(voice.name,'browser:'+(voice.voiceURI||voice.name));option.dataset.browserVoice='true';select.append(option);
+  }
+  const available=[...select.options].some(option=>option.value===speech.voice);
+  select.value=available?speech.voice:'auto';
+}
+refreshSpeechVoices();speech.synth?.addEventListener?.('voiceschanged',refreshSpeechVoices);
+function saveSpeechSettings(){try{localStorage.setItem('civility-speech-settings',JSON.stringify({voice:speech.voice,rate:speech.rate,volume:speech.volume}));}catch(e){}}
+$('#speech-voice').onchange=()=>{speech.configure({voice:$('#speech-voice').value});speech.neuralRetryAt=0;saveSpeechSettings();};
+$('#speech-rate').onchange=()=>{speech.configure({rate:Number($('#speech-rate').value)});saveSpeechSettings();};
 if(!speech.supported){$('#speech-enabled').disabled=true;$('#speech-test').disabled=true;$('#speech-status').textContent='当前浏览器不支持语音播报，请使用 Edge 或 Chrome';}
 function armSpeech(){if($('#speech-enabled').checked&&!speech.enabled&&speech.enable(true))speech.test('语音告警已开启。');}
 $('#speech-enabled').onchange=()=>{try{localStorage.setItem('civility-speech-enabled',$('#speech-enabled').checked);}catch(e){}if($('#speech-enabled').checked)armSpeech();else speech.enable(false);};
-$('#speech-volume').oninput=()=>{speech.volume=Number($('#speech-volume').value);};
+$('#speech-volume').oninput=()=>{speech.configure({volume:Number($('#speech-volume').value)});if(speech.audio)speech.audio.volume=speech.volume;saveSpeechSettings();};
 $('#speech-test').onclick=()=>{if($('#speech-enabled').checked)speech.enable(true);speech.test();};
 function speakAlerts(jid,alerts,mon){speech.notify(jid,alerts,{demo:$(mon?'#m-mock':'#f-mock').checked,live:mon});}
 function speechHello(jid,alerts,mon){if(newSpeechRuns.delete(jid))speakAlerts(jid,alerts,mon);else speech.seed(jid,alerts,{live:mon});}
@@ -728,16 +782,19 @@ function updateControls(){
   $('#m-src').disabled = monitorStarting || monitorRunning;
   $('#m-probe').disabled = monitorStarting || monitorRunning;
   $('#m-cams').disabled = monitorStarting || monitorRunning;
-  $('#btn-detect').disabled = runtimeOutdated || restoringJobs || uploading || fileRunning || !uploadedJob || (!serviceReady && !$('#f-mock').checked);
+  $('#btn-detect').disabled = runtimeOutdated || restoringJobs || uploading || fileRunning || qaPending || qaDeleting || historyLoading || !uploadedJob || (!serviceReady && !$('#f-mock').checked);
   $('#btn-abort').disabled = !fileRunning;
-  $('#file').disabled = fileRunning || uploading;
+  $('#file').disabled = fileRunning || uploading || qaPending || qaDeleting || historyLoading;
   $('#m-mock').disabled = monitorStarting || monitorRunning;
   $('#f-mock').disabled = fileRunning;
   $('#m-scene').disabled = monitorStarting || monitorRunning;
   $('#f-scene').disabled = fileRunning;
   $('#f-loop').disabled = fileRunning;
-  $('#qa-ask').disabled = qaPending || runtimeOutdated || !serviceReady || !$('#qa-video').value;
-  $('#qa-video').disabled=qaPending;$('#qa-refresh').disabled=qaPending;
+  const videoBusy=qaPending||qaDeleting||fileRunning||uploading||historyLoading;
+  $('#qa-ask').disabled = videoBusy || runtimeOutdated || !serviceReady || !$('#qa-video').value;
+  $('#qa-video').disabled=videoBusy;$('#qa-refresh').disabled=videoBusy;
+  $('#qa-delete').disabled=videoBusy||runtimeOutdated||!$('#qa-video').value;
+  $('#qa-model-note').style.display=serviceReady?'none':'block';
 }
 function updateDelayEstimate(){
   const delay = Number($('#m-stride').value)*Number($('#m-batch').value);
@@ -778,7 +835,7 @@ document.querySelectorAll('aside button').forEach(b=>{
     document.querySelectorAll('section').forEach(x=>x.classList.remove('active'));
     b.classList.add('active'); b.setAttribute('aria-current','page');
     $('#tab-' + b.dataset.tab).classList.add('active');
-    if(b.dataset.tab==='qa')loadVideoLibrary();
+    if(b.dataset.tab==='detect')loadVideoLibrary();
   };
 });
 
@@ -787,11 +844,45 @@ function setChip(id, text, kind){
   const el = $(id); el.className = 'chip' + (kind?' '+kind:'');
   el.replaceChildren(); const dot = document.createElement('i'); dot.className='dot'; el.append(dot, document.createTextNode(text));
 }
+function renderServiceState(status,cost={}){
+  serviceSnapshot=status;
+  const closing=status.state==='stopped'&&status.start_worker_alive;
+  const s=serviceAction==='stopping'?{...status,state:'stopping',message:'正在停止服务并释放计算节点…'}
+    :serviceAction==='starting'?{...status,state:'submitting',message:'正在提交服务启动请求…'}:status;
+  const map={idle:['模型未启动',''],ready:['模型就绪','ok'],running:['隧道就绪','ok'],
+    pending:['排队中','warn'],submitting:['提交中','warn'],stopping:['正在停止并释放节点','warn'],
+    error:[s.release_pending?'释放失败，可重试':'启动失败','err'],stopped:['已停止','']};
+  const m=closing&&!serviceAction?['启动线程收尾中','warn']:(map[s.state]||[s.state,'']);
+  serviceReady=s.state==='ready';
+  setChip('#c-svc',m[0]+(s.node&&s.state!=='stopped'?' · '+s.node:''),m[1]);
+  $('#svc-msg').textContent=closing&&!serviceAction?'计算节点已释放，正在结束启动线程；完成后可重新启动。':s.message||m[0];
+    $('#svc-detail').innerHTML = Object.entries({
+      '状态':m[0],'作业号':s.jobid||'—','计算节点':s.node||'—','模型':s.model,
+      '本机隧道':s.local_url||'—','隧道':s.tunnel_alive?'连通':'—',
+      '已运行':cost.uptime_text||'—',
+      // 把"正在烧钱"变成看得见的数字 —— 用户就是被这个坑过
+      '估算花费':(cost.est_cost?`≈ <b style="color:var(--warn)">${esc(cost.est_cost)} 元</b>`
+                 +`（${esc(cost.price_per_hour)} 元/卡时）`:'—')
+    }).map(([k,v])=>`${esc(k)}：<b>${k==='估算花费'?v:esc(v??'—')}</b>`).join('<br>');
+
+  const busy=['ready','running','pending','submitting','stopping'].includes(s.state);
+  $('#btn-start').disabled=!!serviceAction||runtimeOutdated||busy||!!s.release_pending||!!s.start_worker_alive;
+  $('#btn-stop').disabled=!!serviceAction||(!busy&&!s.release_pending);
+  $('#svc-bar').style.width=s.state==='ready'?'100%':(['running','pending','submitting','stopping'].includes(s.state)?'55%':'0%');
+  $('#svc-bar').classList.toggle('service-pending',['running','pending','submitting','stopping'].includes(s.state));
+  updateControls();
+}
+function requestServiceRefresh(){
+  if(refreshBusy){serviceRefreshQueued=true;return;}
+  return refresh();
+}
 async function refresh(){
   if(refreshBusy) return;
   refreshBusy = true;
+  const requestEpoch=serviceEpoch;
   try{
     const st = await api('/api/state');
+    if(requestEpoch!==serviceEpoch){serviceRefreshQueued=true;return;}
     runtimeOutdated = !st.runtime || st.runtime.protocol < 3 || st.runtime.restart_required;
     $('#runtime-note').style.display = runtimeOutdated?'block':'none';
     $('#runtime-note').textContent = runtimeOutdated
@@ -801,33 +892,13 @@ async function refresh(){
     serviceReady = s.state==='ready';
     stateFailed = false; $('#connection-note').style.display='none';
     document.querySelectorAll('.heading-badge').forEach(el=>{el.innerHTML='<i class="dot"></i>'+((st.aggregate||{}).open_risks===false?'配置行为告警':'行为识别 · 风险研判');});
-    const map = {idle:['模型未启动',''], ready:['模型就绪','ok'],
-      running:['隧道就绪','warn'], pending:['排队中','warn'],
-      submitting:['提交中','warn'], stopping:['正在停止并释放节点','warn'],
-      error:['启动失败','err'], stopped:['已停止','']};
-    const m = map[s.state] || [s.state,''];
-    setChip('#c-svc', m[0] + (s.node?' · '+s.node:''), m[1]);
-    const mode = (st.aggregate||{}).mode || '—';
-    setChip('#c-mode', '告警 ' + ({ai:'AI 判断', immediate:'立即告警',
-      smoothed:'时序平滑'}[mode]||mode), mode==='ai'?'ok':'');
-    $('#svc-msg').textContent = s.message || (s.state==='stopping'?m[0]:s.state);
-    const cost = st.cost || {};
-    $('#svc-detail').innerHTML = Object.entries({
-      '状态':s.state==='stopping'?m[0]:s.state,'作业号':s.jobid||'—','计算节点':s.node||'—','模型':s.model,
-      '本机隧道':s.local_url||'—','隧道':s.tunnel_alive?'连通':'—',
-      '已运行':cost.uptime_text||'—',
-      // 把"正在烧钱"变成看得见的数字 —— 用户就是被这个坑过
-      '估算花费':(cost.est_cost?`≈ <b style="color:var(--warn)">${esc(cost.est_cost)} 元</b>`
-                 +`（${esc(cost.price_per_hour)} 元/卡时）`:'—')
-    }).map(([k,v])=>`${esc(k)}：<b>${k==='估算花费'?v:esc(v??'—')}</b>`).join('<br>');
-    $('#log-box').textContent = (st.log||[]).join('\n') || '—';
-    const busy = ['ready','running','pending','submitting','stopping'].includes(s.state);
-    $('#btn-start').disabled = runtimeOutdated || busy; $('#btn-stop').disabled = !busy;
-    $('#svc-bar').style.width = s.state==='ready'?'100%':(busy?'55%':'0%');
-    if(!uploadedJob) $('#btn-detect').disabled = s.state!=='ready';
+    renderServiceState(s,st.cost||{});
+    const mode=(st.aggregate||{}).mode||'—';
+    setChip('#c-mode','告警 '+({ai:'AI 判断',immediate:'立即告警',smoothed:'时序平滑'}[mode]||mode),'');
+    $('#log-box').textContent=(st.log||[]).join('\n')||'—';
     // ⚠️ 勾了「演示模式」就不需要集群 —— 这一条曾经写死成"服务没就绪就禁用"，
     //    等于把"没 VPN 也能试"的唯一入口堵死了。
-    const canMonitor = !runtimeOutdated && ((s.state === 'ready') || $('#m-mock').checked);
+    const canMonitor = !runtimeOutdated && (serviceReady || $('#m-mock').checked);
     updateControls();
     // 按不动就说明为什么、并给一键去处（用户实测反馈："检测到摄像头后
     // 开始监测按钮按不了" —— 当时按钮只是变灰，一个字都没解释）
@@ -868,12 +939,16 @@ async function refresh(){
     $('#f-mock-note').style.display = $('#f-mock').checked ? 'block' : 'none';
     renderCostBar(st);
   }catch(e){
+    if(requestEpoch!==serviceEpoch){serviceRefreshQueued=true;return;}
     serviceReady = false; updateControls();
     $('#connection-note').style.display='block';
     $('#connection-note').textContent='本地服务连接异常：'+e.message+'。页面会自动重试。';
     if(!stateFailed) setChip('#c-svc','本地服务离线','err');
     stateFailed = true;
-  }finally{ refreshBusy=false; }
+  }finally{
+    refreshBusy=false;
+    if(serviceRefreshQueued&&!serviceAction){serviceRefreshQueued=false;queueMicrotask(()=>refresh());}
+  }
 }
 
 /* 成本横幅：孤儿作业 / 自动释放。
@@ -944,16 +1019,24 @@ $('#m-apply-live').onclick = async ()=>{
   finally{$('#m-apply-live').disabled=false;}
 };
 $('#btn-start').onclick = async ()=>{
-  $('#btn-start').disabled = true;
-  try{ const r = await api('/api/service/start',{method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({model:$('#model-select').value})}); flash(r.message,'ok'); }
-  catch(e){ flash(e.message,'err'); $('#btn-start').disabled=false; }
-  refresh();
+  if(serviceAction)return;
+  serviceAction='starting';serviceEpoch++;renderServiceState(serviceSnapshot);
+  let result;
+  try{
+    result=await api('/api/service/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:$('#model-select').value})});
+    flash(result.message,'ok');
+  }catch(e){flash(e.message,'err');result={service:{state:'error',message:e.message}};}
+  finally{serviceAction=null;serviceEpoch++;renderServiceState(result?.service||serviceSnapshot);requestServiceRefresh();}
 };
 $('#btn-stop').onclick = async ()=>{
-  try{ flash((await api('/api/service/stop',{method:'POST'})).message,'ok'); }
-  catch(e){ flash(e.message,'err'); } refresh();
+  if(serviceAction)return;
+  serviceAction='stopping';serviceEpoch++;renderServiceState(serviceSnapshot);
+  let result;
+  try{
+    result=await api('/api/service/stop',{method:'POST',timeoutMs:150000});
+    flash(result.message,'ok');
+  }catch(e){flash(e.message,'err');result={service:{...serviceSnapshot,state:'error',release_pending:true,message:e.message}};}
+  finally{serviceAction=null;serviceEpoch++;renderServiceState(result?.service||serviceSnapshot);requestServiceRefresh();}
 };
 $('#btn-refresh').onclick = ()=>{ refresh(); flash('已刷新'); };
 
@@ -1298,15 +1381,17 @@ function frameThumbUrl(jid, d){
   const f0 = (d.frame0 === undefined || d.frame0 === null) ? -1 : d.frame0;
   // frame0 < 0 表示后端没给真实帧号（旧记录）→ 回退旧的"按时间戳推算"路径
   const actual = Array.isArray(d.frame_indices) ? d.frame_indices[mid] : undefined;
+  if(d.archive_revision!==undefined&&Number.isInteger(actual))return archiveFrameUrl(jid,d,actual);
   const bust = Number.isInteger(actual)&&actual>=0 ? actual : f0 >= 0 ? f0 + mid : Math.round((d.t_start||0) * 100);
   return `/api/job/${jid}/frames/${d.window_id}/${mid}?f=${bust}`;
 }
+function archiveFrameUrl(jid,d,index){return `/api/videos/${encodeURIComponent(jid)}/frames/f_${index}?revision=${encodeURIComponent(d.archive_revision||'')}`;}
 
 function riskDetails(risks){
   return (Array.isArray(risks)?risks:[]).map(r=>{
     const severity=severityLabels[r.severity]?'sev-'+r.severity:'sev-medium';
     const pending=Array.isArray(r.evidence_issues)&&r.evidence_issues.length>0;
-    return `<div class="risk-detail"><strong>${esc(r.name||'现场风险')}</strong> <span class="tag risk-source">AI 风险</span> <span class="tag ${severity}">${esc(severityLabels[r.severity]||'待评估')}</span> <span class="muted">${confidenceText(r.confidence)} · ${pending?'待复核，未告警':r.alert===true?'模型建议告警':'模型未建议告警'}</span>${r.person_desc?`<div class="risk-evidence">涉及人物：${esc(r.person_desc)}</div>`:''}${r.observable?`<div class="risk-evidence">${pending?'模型原始说法（待复核）':'模型描述的证据'}：${esc(r.observable)}</div>`:''}${r.alert_reason?`<div class="risk-evidence">模型判断理由：${esc(r.alert_reason)}</div>`:''}</div>`;
+    return `<div class="risk-detail${!pending&&r.alert===true?' behavior-hit':''}"><strong>${esc(r.name||'现场风险')}</strong> <span class="tag risk-source">AI 风险</span> <span class="tag ${severity}">${esc(severityLabels[r.severity]||'待评估')}</span> <span class="muted">${confidenceText(r.confidence)} · ${pending?'待复核，未告警':r.alert===true?'模型建议告警':'模型未建议告警'}</span>${r.person_desc?`<div class="risk-evidence">涉及人物：${esc(r.person_desc)}</div>`:''}${r.observable?`<div class="risk-evidence">${pending?'模型原始说法（待复核）':'模型描述的证据'}：${esc(r.observable)}</div>`:''}${r.alert_reason?`<div class="risk-evidence">模型判断理由：${esc(r.alert_reason)}</div>`:''}</div>`;
   }).join('');
 }
 function evidenceReviewNotice(warnings){
@@ -1319,12 +1404,13 @@ function windowCard(d,jid){
   const people=!d.error&&Array.isArray(d.people)?d.people:[];
   const sceneText=d.error?'本窗口识别失败，未生成有效判断；后续窗口会继续检查。':d.scene||'暂无场景描述';
   const div=document.createElement('article');
-  div.className='act'+(hits.length||risks.some(r=>r.alert===true)?' hit':'');
+  div.className='act'+(hits.length||risks.some(r=>r.alert===true&&!(Array.isArray(r.evidence_issues)&&r.evidence_issues.length))?' hit':'');
+  div.dataset.windowId=d.window_id||'';
   const latency=Number(d.latency);
   const sampling=d.sampling||{};
   const samplingTags=(Number(sampling.retained_action_frames)>0?`<span class="tag sampling-tag">补充 ${esc(sampling.retained_action_frames)} 张动作关键帧</span>`:'')+(Number(sampling.gap_sec)>0?`<span class="tag sampling-gap" title="保留关键帧不代表已完整查看这段时间">采样空档 ${Number(sampling.gap_sec).toFixed(1)} 秒</span>`:'');
-  div.innerHTML=`<div class="top"><span class="t">#${esc(d.cumulative||d.index||'—')}</span><span>${esc(d.t_start)}s – ${esc(d.t_end)}s</span>${d.skipped?'<span class="tag rule-source">画面静止 · 未调用模型</span>':(latency>0?`<span>${latency.toFixed(1)}s</span>`:'')}${d.tokens_out?`<span>${esc(d.tokens_out)} tok</span>`:''}${samplingTags}${hits.map(x=>`<span class="tag">${esc(x.name)} ${confidenceText(x.confidence)}</span>`).join('')}${d.error?`<span style="color:var(--err)">${esc(d.error)}</span>`:''}</div>
-    <div class="row" style="align-items:flex-start;gap:13px;flex-wrap:nowrap"><img class="thumb" src="${esc(frameThumbUrl(jid,d))}" loading="lazy" alt="${esc(d.t_start)}至${esc(d.t_end)}秒窗口判定画面" tabindex="0" role="button" title="本窗口中间帧，点击或按回车放大"><div style="flex:1;min-width:0">${evidenceReviewNotice(warnings)}${warnings.length?'<div class="raw-description-label">以下为 AI 原始描述，待复核</div>':''}<div class="scene-desc">${esc(sceneText)}</div>${people.map((p,i)=>`<div class="person"><span class="pin">${i+1}</span><div class="body"><div class="where">${esc(p.where)}${p.appearance?' · '+esc(p.appearance):''}</div><div class="doing">${esc(p.action)}</div>${p.changed&&!['无','无明显变化'].includes(p.changed)?`<div class="chg">动作变化：${esc(p.changed)}</div>`:''}</div></div>`).join('')}${!people.length?`<div class="muted" style="font-size:11px">${d.error?'等待后续窗口的有效判断。':d.skipped?'本窗口未进行新的 AI 判断；静止画面会定期复检。':'画面中未识别到人物'}</div>`:''}${hits.map(x=>x.observable?`<div class="risk-detail"><strong>${esc(x.name)} · 配置行为</strong><div class="risk-evidence">模型描述的证据：${esc(x.observable)}</div>${x.alert_reason?`<div class="risk-evidence">判断理由：${esc(x.alert_reason)}</div>`:''}</div>`:'').join('')}${riskDetails(risks)}</div></div>`;
+  div.innerHTML=`<div class="top"><span class="t">#${esc(d.cumulative||d.index||'—')}</span><span>${esc(d.t_start)}s – ${esc(d.t_end)}s</span>${d.skipped?'<span class="tag rule-source">画面静止 · 未调用模型</span>':(latency>0?`<span>${latency.toFixed(1)}s</span>`:'')}${d.tokens_out?`<span>${esc(d.tokens_out)} tok</span>`:''}${samplingTags}${hits.map(x=>`<span class="tag behavior-hit">${esc(x.name)} · 行为命中 ${confidenceText(x.confidence)}</span>`).join('')}${d.error?`<span style="color:var(--err)">${esc(d.error)}</span>`:''}</div>
+    <div class="row" style="align-items:flex-start;gap:13px;flex-wrap:nowrap"><img class="thumb" src="${esc(frameThumbUrl(jid,d))}" loading="lazy" alt="${esc(d.t_start)}至${esc(d.t_end)}秒窗口判定画面" tabindex="0" role="button" title="本窗口中间帧，点击或按回车放大"><div style="flex:1;min-width:0">${evidenceReviewNotice(warnings)}${warnings.length?'<div class="raw-description-label">以下为 AI 原始描述，待复核</div>':''}<div class="scene-desc">${esc(sceneText)}</div>${people.map((p,i)=>`<div class="person"><span class="pin">${i+1}</span><div class="body"><div class="where">${esc(p.where)}${p.appearance?' · '+esc(p.appearance):''}</div><div class="doing">${esc(p.action)}</div>${p.changed&&!['无','无明显变化'].includes(p.changed)?`<div class="chg">动作变化：${esc(p.changed)}</div>`:''}</div></div>`).join('')}${!people.length?`<div class="muted" style="font-size:11px">${d.error?'等待后续窗口的有效判断。':d.skipped?'本窗口未进行新的 AI 判断；静止画面会定期复检。':'画面中未识别到人物'}</div>`:''}${hits.map(x=>x.observable?`<div class="risk-detail behavior-hit"><strong>${esc(x.name)} · 配置行为</strong><div class="risk-evidence">模型描述的证据：${esc(x.observable)}</div>${x.alert_reason?`<div class="risk-evidence">判断理由：${esc(x.alert_reason)}</div>`:''}</div>`:'').join('')}${riskDetails(risks)}</div></div>`;
   div.querySelector('.thumb').onclick=e=>openImageViewer(e.currentTarget);
   if(d.verification){
     const notice=document.createElement('details');
@@ -1339,7 +1425,7 @@ function windowCard(d,jid){
     sequence.innerHTML=`<summary style="cursor:pointer">查看完整过程 · ${esc(d.frames)} 帧</summary><div style="display:flex;gap:8px;overflow-x:auto;padding:10px 0">${Array.from({length:Math.min(d.frames,32)},(_,i)=>{
       const label=Array.isArray(d.frame_labels)&&d.frame_labels[i]?d.frame_labels[i]:`第 ${i+1} 帧`;
       const actual=Array.isArray(d.frame_indices)&&d.frame_indices[i]>=0?d.frame_indices[i]:(d.frame0||0)+i;
-      const url=`/api/job/${encodeURIComponent(jid)}/frames/${encodeURIComponent(d.window_id)}/${i}?f=${actual}`;
+      const url=d.archive_revision!==undefined?archiveFrameUrl(jid,d,actual):`/api/job/${encodeURIComponent(jid)}/frames/${encodeURIComponent(d.window_id)}/${i}?f=${actual}`;
       return `<figure style="margin:0;flex:0 0 126px"><img class="sequence-frame" src="${esc(url)}" loading="lazy" alt="${esc(label)} · 模型输入第${i+1}帧" role="button" tabindex="0" style="width:126px;height:82px;object-fit:contain;background:#111918;border-radius:5px;cursor:zoom-in"><figcaption>${esc(label)}</figcaption></figure>`;
     }).join('')}</div>`;
     sequence.querySelectorAll('.sequence-frame').forEach(img=>img.onclick=()=>openImageViewer(img));
@@ -1353,10 +1439,11 @@ function addAction(d,jid){
   feed.querySelectorAll('.empty-state').forEach(el=>el.remove());
   feed.prepend(windowCard(d,jid));
   while(feed.children.length>60)feed.lastChild.remove();
+  markAlertWindows(true);
 }
 /* 视频文件 */
 const drop = $('#drop'), fileInput = $('#file');
-drop.onclick = ()=>{if(!fileRunning&&!uploading)fileInput.click();else flash('当前视频正在处理，请等待完成或先中止','warn');};
+drop.onclick = ()=>{if(!fileInput.disabled)fileInput.click();else flash('当前视频正在处理，请等待完成或先中止','warn');};
 drop.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();drop.click();}};
 drop.ondragover = e=>{ e.preventDefault(); drop.classList.add('over'); };
 drop.ondragleave = ()=> drop.classList.remove('over');
@@ -1365,7 +1452,7 @@ drop.ondrop = e=>{ e.preventDefault(); drop.classList.remove('over');
 fileInput.onchange = ()=>{ if(fileInput.files[0]) doUpload(fileInput.files[0]); };
 
 async function doUpload(f){
-  if(fileRunning||uploading)return flash('当前视频正在处理，请等待完成或先中止','warn');
+  if(fileRunning||uploading||qaPending||qaDeleting||historyLoading)return flash('当前视频正在处理，请等待完成或先中止','warn');
   if(!/\.(mp4|avi|mkv|mov|webm|m4v|mpeg|mpg)$/i.test(f.name)&&!f.type.startsWith('video/'))return flash('请选择视频文件','err');
   uploading=true;updateControls();
   const fd = new FormData(); fd.append('file', f);
@@ -1373,6 +1460,9 @@ async function doUpload(f){
   try{
     const r = await api('/api/upload',{method:'POST', body:fd});
     uploadedJob = r.job_id;
+    analysisRequest++;libraryRequest++;currentJob=uploadedJob;
+    $('#qa-video').value='';$('#qa-answers').replaceChildren();$('#qa-question').value='';selectQaVideo();
+    $('#video-results-title').textContent='分析结果 · '+f.name;
     $('#up-info').textContent = `${f.name} · ${r.size_mb} MB`;
     clearFileHistory();$('#job-msg').textContent='上传完成 · 等待分析';
     saveSessionJob('file',null);flash('上传完成','ok');
@@ -1408,7 +1498,8 @@ function clearFileHistory(){
   renderAlerts([],false);
 }
 function finishFile(summary={}){
-  setTimeout(()=>loadVideoLibrary(),500);
+  const finishedJob=currentJob;
+  setTimeout(()=>loadVideoLibrary({preferred:finishedJob}),500);
   fileRunning=false;if(es){es.close();es=null;}updateControls();
   $('#job-bar').style.width='100%';$('#job-msg').textContent=summary.message||'分析已结束';
   renderAlerts(summary.alerts||alertStore.file,false);saveSessionJob('file',null);
@@ -1447,23 +1538,31 @@ function addWindow(d,jid){
   $('#windows').querySelectorAll('.empty-state').forEach(el=>el.remove());
   $('#windows').prepend(windowCard(d,jid));
   while($('#windows').children.length>200)$('#windows').lastChild.remove();
+  markAlertWindows(false);
 }
-async function loadVideoLibrary(){
-  if(qaPending)return;
-  const selected=$('#qa-video').value;
+async function loadVideoLibrary({preferred=null}={}){
+  if(qaPending||qaDeleting||fileRunning||uploading)return;
+  const request=++libraryRequest,selected=preferred||$('#qa-video').value;
   try{
-    const response=await api('/api/videos');qaVideos=Array.isArray(response.videos)?response.videos:[];
+    const response=await api('/api/videos');
+    if(request!==libraryRequest||fileRunning||uploading||qaDeleting)return;
+    qaVideos=Array.isArray(response.videos)?response.videos:[];
     $('#qa-video').replaceChildren();
-    if(!qaVideos.length){const option=new Option('暂无已分析视频，请先完成一次视频文件分析','');$('#qa-video').append(option);}
+    $('#qa-video').append(new Option(qaVideos.length?'选择已分析视频，查看结果或提问':'暂无分析记录，可在本页上传视频',''));
     for(const video of qaVideos){$('#qa-video').append(new Option(`${video.filename} · ${video.archived_windows??video.windows_seen} 窗口${video.use_mock?' · 演示记录':''}`,video.video_id));}
     if(qaVideos.some(v=>v.video_id===selected))$('#qa-video').value=selected;
+    else if(!uploadedJob&&qaVideos.length)$('#qa-video').value=qaVideos[0].video_id;
     selectQaVideo();
+    if(!uploadedJob&&$('#qa-video').value)await loadHistoryAnalysis($('#qa-video').value);
   }catch(e){$('#qa-status').textContent='读取分析记录失败：'+e.message;}
   finally{updateControls();}
 }
 function selectQaVideo(){
   const video=qaVideos.find(v=>v.video_id===$('#qa-video').value),player=$('#qa-player');
-  if(!video){$('#qa-video-info').textContent='先在视频文件分析页上传并完成分析，再到这里提问。';player.style.display='none';player.removeAttribute('src');return;}
+  const previous=player.dataset.videoId||'',selected=video?.video_id||'';
+  if(previous!==selected){player.pause();player.removeAttribute('src');player.removeAttribute('poster');$('#qa-answers').replaceChildren();$('#qa-question').value='';$('#qa-status').textContent='';}
+  player.dataset.videoId=selected;
+  if(!video){$('#qa-video-info').textContent=uploadedJob?'完成本次分析后会自动选中视频，可以继续提问。':'在本页上传并完成分析，或选择已有记录继续查看。';player.style.display='none';return;}
   $('#qa-video-info').textContent=`${video.filename} · ${video.archived_windows??video.windows_seen} 个分析窗口 · ${video.use_mock?'历史结论为演示数据，问答将依据真实画面':'问答会重新查看实际画面'}${video.source_available?'':' · 原视频已清理，仅使用保留的证据帧'}${video.archive_error?' · '+video.archive_error:''}`;
   player.style.display=video.source_available?'block':'none';
   const source=`/api/videos/${encodeURIComponent(video.video_id)}/source`;
@@ -1472,8 +1571,47 @@ function selectQaVideo(){
   if(video.source_available&&player.getAttribute('src')!==source)player.src=source;
   if(!video.source_available){player.pause();player.removeAttribute('src');}
 }
-$('#qa-video').onchange=()=>{selectQaVideo();$('#qa-answers').replaceChildren();$('#qa-status').textContent='';updateControls();};
+async function loadHistoryAnalysis(jid){
+  if(fileRunning||uploading||qaPending||qaDeleting)return;
+  const request=++analysisRequest;historyLoading=true;updateControls();
+  $('#qa-status').textContent='正在读取历史分析…';
+  try{
+    const analysis=await api(`/api/videos/${encodeURIComponent(jid)}/analysis`);
+    if(request!==analysisRequest||$('#qa-video').value!==jid||fileRunning||uploading)return;
+    currentJob=jid;uploadedJob=null;clearFileHistory();
+    $('#video-results-title').textContent='分析结果 · '+analysis.filename;
+    $('#job-msg').textContent=`历史分析 · ${analysis.archived_windows??analysis.windows_seen??0} 个窗口`;
+    $('#up-info').textContent='可上传新视频继续分析';
+    const rows=analysis.window_results||[];
+    if(rows.length)$('#windows').replaceChildren();
+    rows.slice().reverse().forEach(row=>$('#windows').append(windowCard(row,jid)));
+    renderAlerts(analysis.alerts||[],false);
+    $('#qa-status').textContent=rows.length>=200?'已显示最近 200 个窗口；问答仍检索完整保存记录。':'历史结果已载入，可以继续提问。';
+  }catch(e){if(request===analysisRequest)$('#qa-status').textContent='读取分析结果失败：'+e.message;}
+  finally{if(request===analysisRequest){historyLoading=false;updateControls();}}
+}
+$('#qa-video').onchange=()=>{selectQaVideo();$('#qa-answers').replaceChildren();$('#qa-status').textContent='';updateControls();if($('#qa-video').value)loadHistoryAnalysis($('#qa-video').value);};
 $('#qa-refresh').onclick=()=>loadVideoLibrary();
+$('#qa-delete').onclick=()=>{
+  if(qaPending||qaDeleting||fileRunning||uploading)return;
+  const video=qaVideos.find(v=>v.video_id===$('#qa-video').value);if(!video)return;
+  deleteVideoId=video.video_id;$('#video-delete-name').textContent=video.filename;
+  $('#video-delete-dialog').showModal();
+};
+$('#video-delete-cancel').onclick=()=>$('#video-delete-dialog').close();
+$('#video-delete-dialog').addEventListener('cancel',event=>{if(qaDeleting)event.preventDefault();});
+$('#video-delete-confirm').onclick=async()=>{
+  const jid=deleteVideoId;if(!jid||qaDeleting)return;
+  qaDeleting=true;libraryRequest++;analysisRequest++;updateControls();
+  $('#video-delete-confirm').disabled=true;$('#video-delete-cancel').disabled=true;
+  const player=$('#qa-player');player.pause();player.removeAttribute('src');player.removeAttribute('poster');player.load();
+  try{
+    const result=await api(`/api/videos/${encodeURIComponent(jid)}`,{method:'DELETE'});
+    if(currentJob===jid){currentJob=null;uploadedJob=null;clearFileHistory();$('#job-msg').textContent='记录已删除';$('#up-info').textContent='';$('#video-results-title').textContent='分析结果';saveSessionJob('file',null);}
+    $('#qa-video').value='';$('#qa-answers').replaceChildren();$('#qa-question').value='';selectQaVideo();flash(result.message||'已删除视频','ok');
+  }catch(e){selectQaVideo();flash('删除失败：'+e.message,'err');}
+  finally{qaDeleting=false;deleteVideoId=null;$('#video-delete-confirm').disabled=false;$('#video-delete-cancel').disabled=false;$('#video-delete-dialog').close();updateControls();await loadVideoLibrary();}
+};
 $('#qa-ask').onclick=async()=>{
   const jid=$('#qa-video').value,question=$('#qa-question').value.trim();
   if(!jid||!question)return flash('请选择视频并填写问题','err');
@@ -1500,6 +1638,7 @@ function renderAlerts(alerts,mon){
   paintAlerts(mon);
 }
 function paintAlerts(mon){
+  markAlertWindows(mon);
   const box=mon?'#m-alerts':'#alerts',prefix=mon?'m':'f';
   const retained=alertStore[mon?'monitor':'file'].length, visible=filteredAlerts(mon);
   $(mon?'#m-alert-count':'#alert-count').textContent=`${visible.length} / ${retained} 条`;
@@ -1513,6 +1652,15 @@ function paintAlerts(mon){
     const evidenceTime=typeof a.evidence_time_sec==='number'&&Number.isFinite(a.evidence_time_sec)&&a.evidence_time_sec>=0?`<div class="ev">证据时刻 ${a.evidence_time_sec.toFixed(2)}秒</div>`:'';
     return `<article class="alert ${severity}"><div class="t">${esc(a.behavior_name||'现场风险')}<span class="tag sev-${severity}">${severityLabels[severity]}</span><span class="tag ${source==='ai_risk'?'risk-source':'rule-source'}">${source==='ai_risk'?'AI 风险':'配置行为'}</span></div><div class="meta">查看范围 ${esc(a.t_start)}s – ${esc(a.t_end)}s · ${a.hits!=null&&a.span!=null?`命中 ${esc(a.hits)}/${esc(a.span)} · `:''}置信度 ${confidenceText(a.max_confidence??a.confidence)}${a.person_desc?' · '+esc(a.person_desc):''}</div>${evidenceTime}${a.reason?`<div class="reason"><b>判断理由</b> · ${esc(a.reason)}</div>`:''}${(Array.isArray(a.evidences)?a.evidences:[]).map(e=>`<div class="ev">可见证据 · ${esc(e)}</div>`).join('')}</article>`;
   }).join('');
+}
+function markAlertWindows(mon){
+  const ids=new Set(alertStore[mon?'monitor':'file'].flatMap(a=>Array.isArray(a.window_ids)?a.window_ids:[]));
+  $(mon?'#m-feed':'#windows').querySelectorAll('.act').forEach(card=>{
+    const alerted=ids.has(card.dataset.windowId);card.classList.toggle('alerted',alerted);
+    let badge=card.querySelector('.alert-badge');
+    if(alerted&&!badge){badge=document.createElement('span');badge.className='tag alert-badge';badge.textContent='已告警';card.querySelector('.top').append(badge);}
+    else if(!alerted&&badge)badge.remove();
+  });
 }
 function exportAlerts(mon){
   const alerts=filteredAlerts(mon);if(!alerts.length)return;
@@ -1658,7 +1806,7 @@ $('#m-src').setAttribute('aria-describedby','m-probe-msg');
 $('#m-probe-msg').setAttribute('aria-live','polite');
 $('#job-msg').setAttribute('role','status');$('#m-msg').setAttribute('role','status');
 updateDelayEstimate();updateControls();
-loadYaml();refresh();loadAgg();restoreSessionJobs();
+loadYaml();refresh();loadAgg();restoreSessionJobs().then(()=>loadVideoLibrary());
 setInterval(refresh,5000);
 </script>
 </body>

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -95,6 +96,50 @@ class VideoLibrary:
     def public(self, metadata: dict) -> dict:
         return {k: v for k, v in metadata.items() if k not in ("source_path", "source_spec")} | {
             "source_available": self.source(metadata) is not None}
+
+    def delete(self, video_id: str) -> dict:
+        """Remove one completed archive and its owned local files, under one lock."""
+        with self.lock:
+            metadata = self.load(video_id)
+            if metadata.get("state") not in ("done", "stopped", "error"):
+                raise ValueError("视频仍在分析，不能删除")
+            folder = self.folder(video_id)
+            frames = self.frames_root / video_id
+            # Preflight all targets before removing anything, including junctions.
+            for target, root in ((folder, self.root), (frames, self.frames_root)):
+                resolved = target.resolve()
+                if resolved == root or not resolved.is_relative_to(root):
+                    raise ValueError("视频文件路径不在对应的保存目录中，拒绝删除")
+                if target.is_symlink() or (hasattr(target, "is_junction") and target.is_junction()):
+                    raise ValueError("视频目录为链接，拒绝删除")
+            raw = metadata.get("source_path")
+            source = Path(raw) if raw else None
+            owned_source = bool(source and source.stem == video_id
+                                and source.resolve().is_relative_to(self.uploads_root)
+                                and not source.is_symlink())
+            # A migrated archive may share a source. It never owns that file.
+            if owned_source:
+                for path in self.root.glob("*/metadata.json"):
+                    if path.parent == folder:
+                        continue
+                    try:
+                        other = self.load(path.parent.name).get("source_path")
+                        if other and Path(other).resolve() == source.resolve():
+                            owned_source = False
+                            break
+                    except (OSError, ValueError, TypeError):
+                        continue
+            # Keep metadata until all media removal succeeds, so a failed delete
+            # remains visible and can be retried (e.g. a Windows file is in use).
+            if frames.exists():
+                shutil.rmtree(frames)
+            source_removed = False
+            if owned_source and source.exists():
+                source.unlink()
+                source_removed = True
+            shutil.rmtree(folder)
+            return {"video_id": video_id, "source_removed": source_removed,
+                    "source_retained": bool(source and source.exists())}
 
     def frame(self, video_id: str, frame_id: str) -> tuple[Path, dict]:
         match = re.fullmatch(r"f_(\d{1,10})", frame_id)

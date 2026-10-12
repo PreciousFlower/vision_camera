@@ -17,6 +17,7 @@ tju/*credentials*
 phase1/data/frames/
 # 网页上传的视频（本机数据，77 MB）
 phase1/data/uploads/
+phase1/data/speech_models/
 # 真实素材：版权与体积都不适合公开（10.5 MB 的工地视频 + 3.2 MB 片段）。
 # ⚠️ 排除它的代价：`tools/make_demo_stream.py` 无法重新生成 runs/demo_*.h264。
 #    但那些演示流**已经提交**了，所以测试不受影响（见下方白名单）。

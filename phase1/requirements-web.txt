@@ -6,3 +6,6 @@ uvicorn
 python-multipart
 opencv-python
 pillow
+kokoro-onnx>=0.6.1,<0.7
+misaki[zh]>=0.9.4,<1
+soundfile>=0.13,<1

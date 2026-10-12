@@ -3,16 +3,31 @@
   'use strict';
   class AlertSpeech {
     constructor({synth=root.speechSynthesis, Utterance=root.SpeechSynthesisUtterance,
-                 onStatus=()=>{}, storage=root.sessionStorage, now=()=>Date.now()}={}){
+                 onStatus=()=>{}, storage=root.sessionStorage, now=()=>Date.now(),
+                 fetchAudio=root.fetch?.bind(root), makeAudio=root.Audio?()=>new root.Audio():null,
+                 urls=root.URL}={}){
       this.synth=synth;this.Utterance=Utterance;this.onStatus=onStatus;
       this.storage=storage;this.now=now;this.enabled=false;this.volume=1;
       this.queue=[];this.active=null;this.timer=null;this.sequence=0;
       this.seen=new Set();
+      this.voice='auto';this.rate=1;this.fetchAudio=fetchAudio;this.makeAudio=makeAudio;this.urls=urls;
+      this.audio=null;this.audioUrl=null;this.controller=null;this.neuralRetryAt=0;this.lastEngine='系统语音';
+      this.fallbackSequence=0;
       try { const saved=JSON.parse(storage.getItem('civility-spoken-alerts')||'[]');
         if(Array.isArray(saved))saved.slice(-2000).forEach(key=>this.seen.add(key));
       } catch(e) { /* Storage restrictions must not disable detection. */ }
     }
-    get supported(){return !!(this.synth&&this.Utterance);}
+    get supported(){return !!((this.synth&&this.Utterance)||(this.fetchAudio&&this.makeAudio));}
+    configure({voice=this.voice,rate=this.rate,volume=this.volume}={}){
+      this.voice=typeof voice==='string'&&(voice==='auto'||/^neural:(xiaoxiao|yunxi)$/.test(voice)||voice.startsWith('browser:'))?voice:'auto';
+      this.rate=Number.isFinite(Number(rate))?Math.max(.85,Math.min(1.15,Number(rate))):1;
+      this.volume=Number.isFinite(Number(volume))?Math.max(0,Math.min(1,Number(volume))):1;
+    }
+    clearAudio(){
+      if(this.controller){this.controller.abort();this.controller=null;}
+      if(this.audio){this.audio.onended=null;this.audio.onerror=null;this.audio.pause();this.audio.removeAttribute?.('src');this.audio=null;}
+      if(this.audioUrl){this.urls.revokeObjectURL(this.audioUrl);this.audioUrl=null;}
+    }
     key(job,a,live=false){
       const evidenceTime=a.evidence_time_sec;
       const time=live&&typeof evidenceTime==='number'&&Number.isFinite(evidenceTime)&&evidenceTime>=0?evidenceTime:Number(a.t_start)||0;
@@ -30,20 +45,55 @@
     }
     enable(value){
       this.enabled=!!value&&this.supported;
-      if(!this.enabled){this.queue=[];this.sequence++;clearTimeout(this.timer);this.active=null;if(this.synth)this.synth.cancel();}
+      if(!this.enabled){this.queue=[];this.sequence++;clearTimeout(this.timer);this.active=null;this.clearAudio();if(this.synth)this.synth.cancel();}
       this.onStatus(this.supported?(this.enabled?'语音告警已启用':'语音告警已关闭'):'浏览器不支持语音，请使用 Edge 或 Chrome');
       return this.enabled;
     }
-    test(text='语音播报测试，检测到告警后将在此音箱播放。'){
+    test(text='你好，我会提醒你关注现场，请保持留意。'){
       if(!this.supported)return this.onStatus('当前浏览器不支持语音播报');
-      const utterance=this.utterance(text);utterance.onerror=()=>this.onStatus('语音播放失败，请检查浏览器声音权限和系统音量');
-      this.synth.speak(utterance);
+      this.neuralRetryAt=0;
+      // Preview uses the same player, so it never overlaps a live alert.
+      this.queue=this.queue.filter(item=>!item.preview);
+      this.queue.unshift({text,created:this.now(),preview:true});this.drain();
     }
     utterance(text){
-      const u=new this.Utterance(text);u.lang='zh-CN';u.volume=this.volume;u.rate=1;
-      const voices=this.synth.getVoices();
-      u.voice=voices.find(v=>/^zh[-_]CN/i.test(v.lang))||voices.find(v=>/^zh/i.test(v.lang))||null;
+      const u=new this.Utterance(text);u.lang='zh-CN';u.volume=this.volume;u.rate=this.rate;u.pitch=1;
+      const voices=this.synth.getVoices()||[], chinese=voices.filter(v=>/^zh/i.test(v.lang));
+      const preferred=this.voice.startsWith('browser:')?this.voice.slice(8):'';
+      u.voice=voices.find(v=>preferred&&(v.voiceURI||v.name)===preferred)
+        ||chinese.find(v=>/natural|neural|晓晓|xiaoxiao/i.test(v.name))
+        ||chinese.find(v=>/^zh[-_]CN/i.test(v.lang))||chinese[0]||null;
+      if(u.voice)u.lang=u.voice.lang;
       return u;
+    }
+    playBrowser(text,sequence,finish){
+      if(sequence!==this.sequence)return;
+      if(!this.synth||!this.Utterance)return finish(true);
+      const u=this.utterance(text);u.onend=()=>finish();u.onerror=()=>finish(true);
+      this.lastEngine='系统语音';
+      try{this.synth.speak(u);}catch(e){finish(true);}
+    }
+    fallback(text,sequence,finish){
+      if(sequence!==this.sequence||this.fallbackSequence===sequence)return;
+      this.fallbackSequence=sequence;this.clearAudio();this.neuralRetryAt=this.now()+60000;
+      this.onStatus('自然语音暂不可用，本次使用系统声音');this.playBrowser(text,sequence,finish);
+    }
+    async playNeural(text,sequence,finish){
+      if(!this.fetchAudio||!this.makeAudio)throw new Error('Audio unavailable');
+      const controller=new AbortController();this.controller=controller;
+      const timer=setTimeout(()=>controller.abort(),10500);
+      let blob;
+      try{
+        const response=await this.fetchAudio('/api/speech/synthesize',{method:'POST',signal:controller.signal,
+          headers:{'Content-Type':'application/json'},body:JSON.stringify({text,voice:this.voice.slice(7),rate:this.rate})});
+        if(!response.ok||!/^audio\/(mpeg|wav)/i.test(response.headers.get('Content-Type')||''))throw new Error('Neural speech unavailable');
+        blob=await response.blob();if(!blob.size)throw new Error('Empty audio');
+      }finally{clearTimeout(timer);}
+      if(sequence!==this.sequence)return;
+      this.audioUrl=this.urls.createObjectURL(blob);const audio=this.makeAudio();this.audio=audio;
+      audio.volume=this.volume;audio.src=this.audioUrl;this.lastEngine='自然语音';
+      audio.onended=()=>finish();audio.onerror=()=>this.fallback(text,sequence,finish);
+      await audio.play();
     }
     notify(job,alerts,{demo=false,live=false}={}){
       for(const a of this.alerts(alerts)){
@@ -52,25 +102,28 @@
         const name=String(a.behavior_name||a.name||a.behavior_id||'现场风险').slice(0,40);
         const reason=String(a.reason||a.alert_reason||a.observable||'').slice(0,80);
         const time=Number.isFinite(Number(a.t_start))?`视频${Number(a.t_start).toFixed(1)}秒，`:'';
-        this.queue.push({job,created:this.now(),text:`${demo?'演示告警，模拟结论。':'告警。'}${live?'':time}${name}。${reason}`});
+        this.queue.push({job,created:this.now(),text:`${demo?'演示告警，模拟结论。':'请注意，'}${live?'':time}检测到${name}。${reason}`});
       }
       this.queue=this.queue.slice(-8);this.drain();
     }
     drain(){
-      if(this.active||!this.enabled)return;
+      if(this.active||(!this.enabled&&!this.queue[0]?.preview))return;
       this.queue=this.queue.filter(item=>this.now()-item.created<20000);
       const item=this.queue.shift();if(!item)return;
-      this.active=item;const sequence=++this.sequence,u=this.utterance(item.text);
+      this.active=item;const sequence=++this.sequence;
       const finish=(failed=false)=>{
         if(sequence!==this.sequence)return;
-        this.sequence++;clearTimeout(this.timer);this.active=null;
+        this.sequence++;clearTimeout(this.timer);this.clearAudio();this.active=null;
         if(failed){this.enable(false);this.onStatus('语音播放失败，请检查声音权限、音箱和系统音量，再重新启用');}
-        else{this.onStatus('语音告警已启用');this.drain();}
+        else{this.onStatus((item.preview?'试听完成':'语音告警已启用')+' · '+this.lastEngine);this.drain();}
       };
-      u.onend=()=>finish();u.onerror=()=>finish(true);
-      this.timer=setTimeout(()=>{if(sequence!==this.sequence)return;this.synth.cancel();finish(true);},30000);
+      this.timer=setTimeout(()=>{if(sequence!==this.sequence)return;this.synth?.cancel();finish(true);},30000);
       this.onStatus('正在播报：'+item.text);
-      try{this.synth.speak(u);}catch(e){finish(true);}
+      if(this.voice.startsWith('neural:')&&this.now()>=this.neuralRetryAt){
+        this.playNeural(item.text,sequence,finish).catch(()=>{
+          this.fallback(item.text,sequence,finish);
+        });
+      }else this.playBrowser(item.text,sequence,finish);
     }
   }
   root.AlertSpeech=AlertSpeech;

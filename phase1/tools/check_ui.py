@@ -104,7 +104,7 @@ def main() -> int:
         for s in p.split("/"):
             if re.fullmatch(r"\{[^}]*\}", s):        # 路由里的 {job_id}
                 segs.append("*")
-            elif re.fullmatch(r"\$\{[^}]*\}", s):    # 前端模板串里的 ${jid}
+            elif re.fullmatch(r"(?:f_)?\$\{[^}]*\}", s):  # ${jid} or f_${index}
                 segs.append("*")
             elif re.fullmatch(r"(?:\d+|f_\d+)", s):  # 帧序号 0 或证据 ID f_0
                 segs.append("*")
@@ -114,7 +114,7 @@ def main() -> int:
 
     norm = {shape(c) for c in called}
     routes = {shape(r) for r in
-              re.findall(r'@app\.(?:get|post)\("(/api/[^"]+)"', server)}
+              re.findall(r'@app\.(?:get|post|delete)\("(/api/[^"]+)"', server)}
     missing_routes = sorted(norm - routes)
     check("前端调用的接口后端都已实现",
           not missing_routes,

@@ -224,6 +224,71 @@ class ServiceLifecycleTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in self.client.cancel.call_args_list],
                          ["fixture-job", "orphan"])
 
+    def test_repeated_stop_after_release_updates_state_and_allows_restart(self):
+        session = self.session()
+        session.state = 'ready'
+        session.jobid = 'fixture-job'
+        session.node = 'fixture-node'
+        session.tunnel = self.tunnel
+        S.STATE.session = session
+        with TestClient(S.create_app(), raise_server_exceptions=False) as api:
+            self.assertEqual(api.post('/api/service/stop').status_code, 200)
+            # Slurm rejects a second cancellation after the job was released.
+            self.client.cancel.side_effect = RuntimeError('invalid job id')
+            repeated = api.post('/api/service/stop')
+            state = api.get('/api/state').json()['service']
+            self.assertEqual(state['state'], 'stopped', state)
+            self.assertEqual(repeated.status_code, 200)
+            self.assertEqual(self.client.cancel.call_count, 1)
+            self.assertIsNone(state['jobid'])
+            self.assertIsNone(state['node'])
+            self.assertEqual(api.post('/api/service/start', json={}).status_code, 200)
+
+    def test_release_error_is_retryable_and_cannot_allocate_another_node(self):
+        session = self.session(); session.state = 'ready'; session.jobid = 'fixture-job'
+        S.STATE.session = session
+        self.client.cancel.side_effect = RuntimeError('offline')
+        failed = self.api.post('/api/service/stop')
+        self.assertEqual(failed.status_code, 503)
+        state = self.api.get('/api/state').json()['service']
+        self.assertEqual(state['state'], 'error')
+        self.assertTrue(state['release_pending'])
+        self.assertEqual(state['jobid'], 'fixture-job')
+        self.assertEqual(self.api.post('/api/service/start', json={}).status_code, 409)
+        self.client.cancel.side_effect = None
+        self.assertEqual(self.api.post('/api/service/stop').status_code, 200)
+        self.assertFalse(self.api.get('/api/state').json()['service']['release_pending'])
+        self.assertEqual(self.api.post('/api/service/start', json={}).status_code, 200)
+
+
+class SchedulerReleaseTests(unittest.TestCase):
+    def client(self):
+        return C.ClusterClient('/fixture', 'python', '/models')
+
+    def test_release_ack_and_already_absent_are_accepted(self):
+        client = self.client()
+        with patch.object(client, 'run', return_value=(0, '', '')) as run:
+            client.cancel('12345'); self.assertEqual(run.call_count, 1)
+        with patch.object(client, 'run', side_effect=[(1, '', 'invalid job id'), (0, '98765\n', '')]):
+            client.cancel('12345')
+
+    def test_network_and_scheduler_failure_cannot_claim_release(self):
+        client = self.client()
+        with patch.object(client, 'run', side_effect=RuntimeError('offline')):
+            with self.assertRaises(C.ClusterError): client.cancel('12345')
+        with patch.object(client, 'run', side_effect=[(1, '', 'denied'), (0, '12345\n', '')]):
+            with self.assertRaises(C.ClusterError): client.cancel('12345')
+        with patch.object(client, 'run', side_effect=[(1, '', 'denied'), (1, '', 'failed')]):
+            with self.assertRaises(C.ClusterError): client.cancel('12345')
+        with patch.object(client, 'run', return_value=(1, '', 'failed')):
+            with self.assertRaises(C.ClusterError): client.list_my_jobs()
+
+    def test_invalid_id_never_runs_a_shell_command(self):
+        client = self.client()
+        with patch.object(client, 'run') as run:
+            with self.assertRaises(C.ClusterError): client.cancel('123;unsafe')
+            run.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
