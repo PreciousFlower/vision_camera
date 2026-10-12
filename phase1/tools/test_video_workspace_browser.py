@@ -43,8 +43,8 @@ def main():
         """)
         def respond(route):
             url, method = route.request.url, route.request.method
-            if '/static/alert_speech.js' in url:
-                return route.fulfill(content_type='text/javascript', body=(ROOT/'webui/static/alert_speech.js').read_text(encoding='utf-8'))
+            if '/static/' in url:
+                return route.fulfill(content_type='text/javascript', body=(ROOT/'webui/static'/url.split('?')[0].rsplit('/',1)[-1]).read_text(encoding='utf-8'))
             if '/frames/' in url:
                 return route.fulfill(content_type='image/svg+xml', body='<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"><rect width="1280" height="720" fill="#496d96"/></svg>')
             if method not in ('GET', 'HEAD'): writes.append({'url':url,'method':method})

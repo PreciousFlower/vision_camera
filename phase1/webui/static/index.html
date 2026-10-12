@@ -288,6 +288,32 @@ section.active { display: block; animation: fade .2s ease; }
 .feedback-labels button.selected { color:var(--accent); border-color:var(--accent); background:#eef4fb; }
 .feedback-summary { white-space:pre-wrap; font-size:12px; color:var(--dim); margin:12px 0; }
 .evidence-focus { outline:3px solid #4b73a366; outline-offset:3px; }
+.station-panel[hidden],.station-task button[hidden],#station-edit-controls[hidden],#station-save[hidden] { display:none; }
+.station-task { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:12px 0; }
+.station-task select { max-width:280px; }
+.station-counts { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:12px; margin:16px 0; }
+.station-metric { padding:14px 18px; background:#f3f6fa; border:1px solid #dbe4ef; border-radius:7px; display:flex; flex-direction:column; color:var(--dim); font-size:12px; }
+.station-metric strong { color:var(--fg); font-size:28px; font-weight:600; line-height:1.8; }
+.station-metric small { font-size:12px; font-weight:400; }
+.station-table-wrap { overflow:auto; }
+.station-table { width:100%; border-collapse:collapse; font-size:12px; white-space:nowrap; }
+.station-table th,.station-table td { text-align:left; border-bottom:1px solid var(--line); padding:12px 10px; }
+.station-table th { color:var(--dim); font-weight:500; }
+.station-table small { display:block; color:var(--dim); font-size:11px; }
+.station-state { display:inline-block; padding:2px 7px; border-radius:4px; }
+.station-state.present { background:#eaf7ef; color:var(--ok); }
+.station-state.away { background:#fff0ef; color:var(--err); }
+.station-state.unknown { background:#f0f0f0; color:var(--dim); }
+.station-timeline { display:flex; gap:9px; overflow:auto; padding:12px 2px; }
+.station-span { flex:0 0 180px; background:#f5f5f5; border:1px solid var(--line); border-radius:5px; padding:10px; text-align:left; font-size:11px; color:var(--fg2); cursor:pointer; }
+.station-span span { display:block; margin-top:4px; }
+.station-span.at_station { border-left:3px solid var(--ok); }
+.station-span.away { border-left:3px solid var(--err); }
+.station-region-tag { display:inline-block; margin:5px; padding:5px; font-size:12px; }
+.station-canvas { display:block; width:100%; height:auto; background:#f3f3f3; border:1px solid var(--line); cursor:crosshair; }
+.station-dialog .row { flex-wrap:wrap; margin:12px 0; }
+.station-dialog label { font-size:12px; }
+.station-dialog input { max-width:180px; }
 .yaml-editor { background: #fafafa !important; color: #333; }
 .service-controls select { flex: 1; }
 @media (min-width: 1700px) {
@@ -454,6 +480,7 @@ section.active { display: block; animation: fade .2s ease; }
       <button class="btn ghost" id="m-probe">探测源</button>
       <button class="btn ghost" id="m-cams">找摄像头</button>
     </div></div>
+    <div class="station-task"><label>行为预设 <select id="m-profile"><option value="current">当前综合识别</option></select></label><button class="btn ghost sm" id="m-station-setup" hidden>配置工位区域</button><span id="m-profile-note" class="muted"></span></div>
     <div class="row" style="margin-top:12px">
       <label class="f" style="width:108px">分析间隔（秒）
         <input type="number" id="m-stride" value="2" min="0.5" max="60" step="0.5">
@@ -495,6 +522,12 @@ section.active { display: block; animation: fade .2s ease; }
     </details>
   </div>
 
+  <div id="m-station-panel" class="card station-panel" hidden>
+    <div class="card-head"><h3>工位人员统计</h3><div class="row"><button id="m-station-locate" class="btn ghost sm">查看人员位置</button><button id="m-station-export" class="btn ghost sm">导出统计</button></div></div>
+    <p id="m-station-status" class="muted" role="status">等待人员观测</p><div id="m-station-counts" class="station-counts"></div>
+    <div class="station-table-wrap"><table class="station-table"><thead><tr><th>人员</th><th>状态</th><th>本次持续</th><th>累计在岗</th><th>累计离岗</th><th>未知时长</th><th>离岗次数</th><th>最长离岗</th><th>人工关联</th></tr></thead><tbody id="m-station-people"></tbody></table></div>
+    <div id="m-station-timeline" class="station-timeline"></div><p class="muted">在岗指位于关联工位区域；未知区间不算离岗。工位统计在页面后台继续，结束时请停止监测并释放节点。</p>
+  </div>
   <div class="grid g-2-1">
     <div>
       <div class="card">
@@ -560,6 +593,7 @@ section.active { display: block; animation: fade .2s ease; }
   <div class="video-workspace">
   <div class="card video-upload">
     <h3><span class="workflow-step">01</span>上传并分析 <span class="hint">新视频从这里开始</span></h3>
+    <div class="station-task"><label>行为预设 <select id="f-profile"><option value="current">当前综合识别</option></select></label><button class="btn ghost sm" id="f-station-setup" hidden>配置工位区域</button><span id="f-profile-note" class="muted"></span></div>
     <div class="drop" id="drop" role="button" tabindex="0" aria-label="选择或拖入视频文件">
       <div class="upload-glyph" aria-hidden="true">↑</div>
       <div style="margin-top:10px;font-size:14px">点击选择视频，或拖拽文件到这里</div>
@@ -649,6 +683,12 @@ section.active { display: block; animation: fade .2s ease; }
   </div>
 
   <div class="card">
+    <div id="f-station-panel" class="station-panel" hidden>
+      <div class="card-head"><h3>工位人员统计</h3><div class="row"><button id="f-station-locate" class="btn ghost sm">查看人员位置</button><button id="f-station-export" class="btn ghost sm">导出统计</button></div></div>
+      <p id="f-station-status" class="muted" role="status">等待人员观测</p><div id="f-station-counts" class="station-counts"></div>
+      <div class="station-table-wrap"><table class="station-table"><thead><tr><th>人员</th><th>状态</th><th>本次持续</th><th>累计在岗</th><th>累计离岗</th><th>未知时长</th><th>离岗次数</th><th>最长离岗</th><th>人工关联</th></tr></thead><tbody id="f-station-people"></tbody></table></div>
+      <div id="f-station-timeline" class="station-timeline"></div><p class="muted">时间按视频时间计算，不能推断视频开始前的在岗时长。身份不确定可人工关联。</p>
+    </div>
     <h3>逐窗口详情 <span class="hint">模型看到的画面 + 它的原始描述</span></h3>
     <div id="windows"><span class="muted">暂无数据</span></div>
   </div>
@@ -686,11 +726,12 @@ section.active { display: block; animation: fade .2s ease; }
 <section id="tab-behaviors">
   <div class="page-heading"><div><div class="eyebrow">BEHAVIOR RULES</div><h1>行为与风险</h1><p>定义重点关注的行为，AI 同时识别名单之外的现场风险。</p></div></div>
   <div class="card">
-    <h3>重点行为定义 <span class="hint">保存后热更新</span></h3>
+    <h3>行为预设 <span class="hint">新任务使用保存后的版本</span></h3>
+    <div class="station-task"><select id="profile-editor"><option value="current">当前综合识别</option></select><input id="profile-copy-name" placeholder="复制后的名称" maxlength="60"><button id="profile-copy" class="btn ghost sm">复制预设</button><button id="profile-default" class="btn ghost sm">设为默认</button><button id="profile-delete" class="btn ghost sm">删除自建预设</button></div>
     <p class="lead">
       三条经验：① 只写「能看见什么」，不写「这合不合规矩」；
       ② <b>反例比正例更重要</b>，它是压制误报的主力；
-      ③ 保存后，后续分析请求会携带新定义给模型，无需重启作业。
+      ③ 启动任务时固定所选预设的版本，保存修改用于后续新任务，无需重启模型。
     </p>
     <div class="note" style="margin-bottom:15px"><b>开放风险判断已独立运行</b>：无需在下方名单中逐项添加。这里的定义用于识别你特别关注的行为，AI 风险会额外判断现场可见、值得提醒的异常，并给出依据。</div>
     <label class="source-label" for="yaml-box">行为配置（YAML）</label>
@@ -753,9 +794,26 @@ section.active { display: block; animation: fade .2s ease; }
   <p>将清理本机保存的分析记录、证据帧和该视频的独立上传副本。此操作无法撤销，电脑上的原始文件不受影响。</p>
   <div class="row"><button id="video-delete-cancel" class="btn ghost">保留视频</button><button id="video-delete-confirm" class="btn ghost danger">确认删除</button></div>
 </dialog>
+<dialog id="station-setup-dialog" class="evidence-dialog station-dialog" aria-labelledby="station-setup-title">
+  <header><h3 id="station-setup-title">工位区域与人员位置</h3><button id="station-close" class="btn ghost sm">关闭 · Esc</button></header>
+  <p id="station-setup-status" class="muted"></p><canvas id="station-canvas" class="station-canvas"></canvas>
+  <div id="station-region-list"></div>
+  <div id="station-edit-controls">
+    <div class="row"><label>工位名称 <input id="station-name" value="1号工位" maxlength="80"></label><label>预期人数 <input id="station-expected" type="number" min="0" max="30" value="1"></label><button id="station-add" class="btn sm">添加工位</button><button id="station-undo" class="btn ghost sm">撤销点</button><button id="station-clear" class="btn ghost sm">清空绘制</button></div>
+    <div class="row"><label>离岗告警（秒）<input id="station-away" type="number" min="1" max="86400" value="60"></label><label>空缺告警（秒）<input id="station-empty" type="number" min="1" max="86400" value="60"></label><label>进出确认（秒）<input id="station-confirm" type="number" min="0" max="30" value="3"></label><label>视频起始钟点（可选）<input id="station-start-clock" type="time"></label></div>
+    <div class="row"><label>工作时段 <input id="station-work-hours" value="[]" placeholder='[["09:00","18:00"]]'></label><label>休息时段 <input id="station-break-hours" value="[]" placeholder='[["12:00","13:00"]]'></label></div>
+    <p class="muted">时间段填写JSON数组；空数组表示不限时段。视频配置了工作时段时，需填写实际起始钟点；摄像头使用北京时间。详细采样参数可在工位预设中编辑。</p>
+  </div><button id="station-save" class="btn">保存区域与规则</button>
+</dialog>
+<dialog id="station-person-dialog" class="video-delete-dialog" aria-labelledby="station-person-title">
+  <h3 id="station-person-title">关联人员</h3><p id="station-person-status" class="muted"></p>
+  <label>显示名称 <input id="station-person-name" maxlength="60"></label><p><label>关联工位 <select id="station-person-home"></select></label></p><p><label>关联为同一人员 <select id="station-person-merge"></select></label></p>
+  <div class="row"><button id="station-person-close" class="btn ghost sm">取消</button><button id="station-person-save" class="btn sm">保存</button></div>
+</dialog>
 <div class="flashes" id="flashes" role="status" aria-live="polite" aria-atomic="false"></div>
 
 <script src="/static/alert_speech.js"></script>
+<script src="/static/workstation_ui.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 let es = null, currentJob = null, uploadedJob = null;
@@ -772,6 +830,7 @@ const severityLabels = {high:'高风险', medium:'中风险', low:'低风险'};
 let qaPending=false, qaDeleting=false, historyLoading=false, qaVideos=[], libraryRequest=0, analysisRequest=0, deleteVideoId=null;
 let uploadMaxBytes=1024*1024*1024;
 let evidenceContext=null,evidenceRequest=0,feedbackLabel=null,feedbackSaving=false;
+let stationsUI=null;
 const speech=new AlertSpeech({onStatus:text=>{$('#speech-status').textContent=text;}});
 const newSpeechRuns=new Set();
 try{$('#speech-enabled').checked=localStorage.getItem('civility-speech-enabled')!=='false';}catch(e){}
@@ -829,6 +888,12 @@ function updateControls(){
   $('#qa-video').disabled=videoBusy;$('#qa-refresh').disabled=videoBusy;
   $('#qa-delete').disabled=videoBusy||runtimeOutdated||!$('#qa-video').value;
   $('#qa-model-note').style.display=serviceReady?'none':'block';
+  $('#m-profile').disabled=runtimeOutdated||monitorStarting||monitorRunning;
+  $('#f-profile').disabled=runtimeOutdated||videoBusy;
+  $('#m-station-setup').disabled=runtimeOutdated||monitorStarting||monitorRunning;
+  $('#f-station-setup').disabled=runtimeOutdated||videoBusy||!uploadedJob;
+  if(stationsUI&&!stationsUI.ready('monitor'))$('#m-start').disabled=true;
+  if(stationsUI&&!stationsUI.ready('file'))$('#btn-detect').disabled=true;
 }
 function updateDelayEstimate(){
   const delay = Number($('#m-stride').value)*Number($('#m-batch').value);
@@ -1144,6 +1209,7 @@ $('#m-start').onclick = async ()=>{
     const r = await api('/api/live/start',{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({source:src, continuous:true, with_actions:true,
+                           ...(stationsUI?.task('monitor')||{}),
                            use_mock:useMock,
                            mock_scene: $('#m-scene').value})});
     flash((useMock? '【演示模式·结论是假的】' : '') + '已开始持续监测：' + r.label,
@@ -1161,6 +1227,7 @@ $('#m-start').onclick = async ()=>{
     }
     monitorStarting = false; monitorRunning = true;
     monJob = r.job_id; speech.begin(r.job_id);newSpeechRuns.add(r.job_id);streamMonitor(r.job_id); startLiveView(r.job_id); updateControls();
+    stationsUI?.attach('monitor',r.job_id);
     saveSessionJob('monitor', r.job_id);
   }catch(e){
     monitorStarting = false; monitorRunning = false; updateControls();
@@ -1377,6 +1444,7 @@ function streamMonitor(jid){
       noteWindowArrival(d);enqueueWindow(d,jid);
       if(monNextTimer){clearInterval(monNextTimer);monNextTimer=null;}
     }
+    if(d.type==='station')stationsUI?.render('monitor',d.data);
     if(d.type==='alerts'){
       if(d.live_metrics)updateLiveMetrics(d.live_metrics);
       renderAlerts(d.alerts||[],true);
@@ -1448,6 +1516,11 @@ function windowCard(d,jid){
   div.innerHTML=`<div class="top"><span class="t">#${esc(d.cumulative||d.index||'—')}</span><span>${esc(d.t_start)}s – ${esc(d.t_end)}s</span>${d.skipped?'<span class="tag rule-source">画面静止 · 未调用模型</span>':(latency>0?`<span>${latency.toFixed(1)}s</span>`:'')}${d.tokens_out?`<span>${esc(d.tokens_out)} tok</span>`:''}${samplingTags}${hits.map(x=>`<span class="tag behavior-hit">${esc(x.name)} · 行为命中 ${confidenceText(x.confidence)}</span>`).join('')}${d.error?`<span style="color:var(--err)">${esc(d.error)}</span>`:''}</div>
     <div class="row" style="align-items:flex-start;gap:13px;flex-wrap:nowrap"><img class="thumb" src="${esc(frameThumbUrl(jid,d))}" loading="lazy" alt="${esc(d.t_start)}至${esc(d.t_end)}秒窗口判定画面" tabindex="0" role="button" title="本窗口中间帧，点击或按回车放大"><div style="flex:1;min-width:0">${evidenceReviewNotice(warnings)}${warnings.length?'<div class="raw-description-label">以下为 AI 原始描述，待复核</div>':''}<div class="scene-desc">${esc(sceneText)}</div>${people.map((p,i)=>`<div class="person"><span class="pin">${i+1}</span><div class="body"><div class="where">${esc(p.where)}${p.appearance?' · '+esc(p.appearance):''}</div><div class="doing">${esc(p.action)}</div>${p.changed&&!['无','无明显变化'].includes(p.changed)?`<div class="chg">动作变化：${esc(p.changed)}</div>`:''}</div></div>`).join('')}${!people.length?`<div class="muted" style="font-size:11px">${d.error?'等待后续窗口的有效判断。':d.skipped?'本窗口未进行新的 AI 判断；静止画面会定期复检。':'画面中未识别到人物'}</div>`:''}${hits.map(x=>x.observable?`<div class="risk-detail behavior-hit"><strong>${esc(x.name)} · 配置行为</strong><div class="risk-evidence">模型描述的证据：${esc(x.observable)}</div>${x.alert_reason?`<div class="risk-evidence">判断理由：${esc(x.alert_reason)}</div>`:''}</div>`:'').join('')}${riskDetails(risks)}</div></div>`;
   div.querySelector('.thumb').onclick=e=>openImageViewer(e.currentTarget);
+  if(d.station_review){
+    const review=document.createElement('details');review.style.cssText='margin-top:10px;font-size:12px';
+    review.innerHTML=`<summary>查看大模型工位复核详情</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(JSON.stringify(d.station_review,null,2))}</pre>`;
+    div.append(review);
+  }
   if(d.verification){
     const notice=document.createElement('details');
     notice.style.cssText='margin-top:10px;font-size:12px';
@@ -1500,6 +1573,7 @@ async function doUpload(f){
   try{
     const r = await api('/api/upload',{method:'POST', body:fd});
     uploadedJob = r.job_id;
+    stationsUI?.clear('file');stationsUI?.updateTask('file');
     analysisRequest++;libraryRequest++;currentJob=uploadedJob;
     $('#qa-video').value='';$('#qa-answers').replaceChildren();$('#qa-question').value='';selectQaVideo();
     $('#video-results-title').textContent='分析结果 · '+f.name;
@@ -1521,9 +1595,11 @@ $('#btn-detect').onclick = async ()=>{
     await api('/api/detect/'+uploadedJob,{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({use_mock: useMock,
+                           ...(stationsUI?.task('file')||{}),
                            mock_scene: $('#f-scene').value,
                            loop: $('#f-loop').checked})});
     speech.begin(uploadedJob);newSpeechRuns.add(uploadedJob);streamJob(uploadedJob);saveSessionJob('file',uploadedJob);
+    stationsUI?.attach('file',uploadedJob);
   }catch(e){fileRunning=false;updateControls();$('#job-msg').textContent='启动失败：'+e.message;flash(e.message,'err');}
 };
 $('#btn-abort').onclick = async ()=>{
@@ -1552,6 +1628,7 @@ function streamJob(jid){
   source.onmessage=ev=>{
     if(es!==source||currentJob!==jid)return;
     const d=parseStreamEvent(ev);if(!d)return;
+    if(d.type==='station'){stationsUI?.render('file',d.data);$('#job-bar').style.width=Math.round((d.data.progress||0)*100)+'%';$('#job-msg').textContent=`工位统计到 ${Number(d.data.time_sec||0).toFixed(1)} 秒 · ${d.data.model_status||'等待模型复核'}`;return;}
     if(d.type==='window')addWindow(d,jid);
     if(d.type==='hello'||d.type==='final'){
       const summary=d.summary||{};
@@ -1619,6 +1696,7 @@ async function loadHistoryAnalysis(jid){
     const analysis=await api(`/api/videos/${encodeURIComponent(jid)}/analysis`);
     if(request!==analysisRequest||$('#qa-video').value!==jid||fileRunning||uploading)return;
     currentJob=jid;uploadedJob=null;clearFileHistory();
+    stationsUI?.attach('file',jid,analysis.profile||{mode:'behavior'});
     $('#video-results-title').textContent='分析结果 · '+analysis.filename;
     $('#job-msg').textContent=`历史分析 · ${analysis.archived_windows??analysis.windows_seen??0} 个窗口`;
     $('#up-info').textContent='可上传新视频继续分析';
@@ -1648,6 +1726,7 @@ $('#video-delete-confirm').onclick=async()=>{
   try{
     const result=await api(`/api/videos/${encodeURIComponent(jid)}`,{method:'DELETE'});
     if(currentJob===jid){currentJob=null;uploadedJob=null;clearFileHistory();$('#job-msg').textContent='记录已删除';$('#up-info').textContent='';$('#video-results-title').textContent='分析结果';saveSessionJob('file',null);}
+    stationsUI?.clear('file');
     $('#qa-video').value='';$('#qa-answers').replaceChildren();$('#qa-question').value='';selectQaVideo();flash(result.message||'已删除视频','ok');
   }catch(e){selectQaVideo();flash('删除失败：'+e.message,'err');}
   finally{qaDeleting=false;deleteVideoId=null;$('#video-delete-confirm').disabled=false;$('#video-delete-cancel').disabled=false;$('#video-delete-dialog').close();updateControls();await loadVideoLibrary();}
@@ -1662,6 +1741,7 @@ $('#qa-ask').onclick=async()=>{
     card.innerHTML=`<h3>${esc(question)}</h3><p style="white-space:pre-wrap">${esc(answer.answer)}</p><div class="qa-evidence">${(answer.citations||[]).map((ref,i)=>`<figure><img data-ref="${i}" src="${esc(ref.image_url)}" alt="${esc(ref.description)}" tabindex="0" role="button"><button class="btn ghost sm" data-seek="${i}">${Number(ref.time_sec).toFixed(2)} 秒 · 抽样第 ${esc(ref.sample_number)} 帧</button><figcaption class="muted">${esc(ref.description)}${ref.recovered?'（从原视频恢复）':''}</figcaption></figure>`).join('')}</div><p class="muted" style="margin-top:12px">${esc(answer.limitations||'基于本次提供的抽样画面，不代表逐帧完整检查。')}</p>${(answer.warnings||[]).length?`<div class="note warn">${answer.warnings.map(esc).join('；')}</div>`:''}<div class="muted answer-meta">${esc(answer.model||'部署的大模型')} · 本次查看 ${esc(answer.sampled_frames)} 张画面${answer.roundtrip_sec?' · '+Number(answer.roundtrip_sec).toFixed(1)+' 秒':''}</div>`;
     card.querySelectorAll('img[data-ref]').forEach(img=>{img.onclick=()=>openImageViewer(img);img.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openImageViewer(img);}};});
     card.querySelectorAll('button[data-seek]').forEach(button=>{button.onclick=()=>{const player=$('#qa-player');if(player.style.display==='none')return flash('原视频已清理，请点击证据帧查看画面','warn');player.currentTime=Number(answer.citations[Number(button.dataset.seek)].time_sec);player.scrollIntoView({block:'center',behavior:'smooth'});};});
+    if(answer.station_statistics&&stationsUI){const statistics=document.createElement('div');statistics.innerHTML=stationsUI.qaStatistics(answer.station_statistics);card.insertBefore(statistics,card.querySelector('.qa-evidence'));}
     $('#qa-answers').prepend(card);while($('#qa-answers').children.length>10)$('#qa-answers').lastChild.remove();$('#qa-status').textContent='回答已完成，点击证据帧查看完整画面。';
   }catch(e){$('#qa-status').textContent='问答失败：'+e.message;flash(e.message,'err');}
   finally{qaPending=false;updateControls();}
@@ -1691,7 +1771,8 @@ function paintAlerts(mon){
   $(box).innerHTML=ordered.map((a,i)=>{
     const source=alertSource(a),severity=severityLabels[a.severity]?a.severity:'medium';
     const evidenceTime=typeof a.evidence_time_sec==='number'&&Number.isFinite(a.evidence_time_sec)&&a.evidence_time_sec>=0?`<div class="ev">证据时刻 ${a.evidence_time_sec.toFixed(2)}秒</div>`:'';
-    return `<article class="alert ${severity}"><div class="t">${esc(a.behavior_name||'现场风险')}<span class="tag sev-${severity}">${severityLabels[severity]}</span><span class="tag ${source==='ai_risk'?'risk-source':'rule-source'}">${source==='ai_risk'?'AI 风险':'配置行为'}</span></div><div class="meta">查看范围 ${esc(a.t_start)}s – ${esc(a.t_end)}s · ${a.hits!=null&&a.span!=null?`命中 ${esc(a.hits)}/${esc(a.span)} · `:''}置信度 ${confidenceText(a.max_confidence??a.confidence)}${a.person_desc?' · '+esc(a.person_desc):''}</div>${evidenceTime}${a.reason?`<div class="reason"><b>判断理由</b> · ${esc(a.reason)}</div>`:''}${(Array.isArray(a.evidences)?a.evidences:[]).map(e=>`<div class="ev">可见证据 · ${esc(e)}</div>`).join('')}</article>`;
+    const basis=a.source==='workstation'?`工作时段累计 ${Number(a.active_duration_sec??a.duration_sec).toFixed(1)}秒 · 大模型已复核`:`置信度 ${confidenceText(a.max_confidence??a.confidence)}`;
+    return `<article class="alert ${severity}"><div class="t">${esc(a.behavior_name||'现场风险')}<span class="tag sev-${severity}">${severityLabels[severity]}</span><span class="tag ${source==='ai_risk'?'risk-source':'rule-source'}">${source==='ai_risk'?'AI 风险':'配置行为'}</span></div><div class="meta">查看范围 ${esc(a.t_start)}s – ${esc(a.t_end)}s · ${a.hits!=null&&a.span!=null?`命中 ${esc(a.hits)}/${esc(a.span)} · `:''}${basis}${a.person_desc?' · '+esc(a.person_desc):''}</div>${evidenceTime}${a.reason?`<div class="reason"><b>判断理由</b> · ${esc(a.reason)}</div>`:''}${(Array.isArray(a.evidences)?a.evidences:[]).map(e=>`<div class="ev">可见证据 · ${esc(e)}</div>`).join('')}</article>`;
   }).join('');
   $(box).querySelectorAll('article.alert').forEach((card,i)=>{
     const a=ordered[i],button=document.createElement('button');button.className='btn ghost sm';button.style.marginTop='10px';button.textContent='查看前后证据 / 复核';
@@ -1766,7 +1847,7 @@ function loadFeedbackSelection(){
   $('#feedback-save').disabled=feedbackSaving||runtimeOutdated||!evidenceContext||!id||!feedbackLabel;
   const labelNames={correct:'正确',false_positive:'误报',missed:'漏报'};
   const result=evidenceContext?.model_results?.[id];
-  $('#feedback-summary').textContent=(previous?`已保存人工标签：${labelNames[previous.label]}${previous.note?' · '+previous.note:''}\n`:'')+(result?`大模型原始判断：${result.violation===true||result.alert===true?'行为命中':'未确认行为'} · ${result.observable||result.alert_reason||'无补充描述'}`:'该窗口没有此行为的模型判断，可标记漏报。');
+  $('#feedback-summary').textContent=(previous?`已保存人工标签：${labelNames[previous.label]}${previous.note?' · '+previous.note:''}\n`:'')+(result?`${result.origin==='station_statistics'?'统计状态与模型复核':'大模型原始判断'}：${result.violation===true||result.alert===true?'行为命中':'未确认行为'} · ${result.observable||result.alert_reason||'无补充描述'}`:'该窗口没有此行为的模型判断，可标记漏报。');
 }
 $('#feedback-behavior').onchange=loadFeedbackSelection;
 $('#feedback-labels').querySelectorAll('button').forEach(button=>button.onclick=()=>{
@@ -1811,6 +1892,7 @@ async function restoreSessionJobs(){
     try{
       const summary=await api('/api/job/'+encodeURIComponent(jid));
       const mon=kind==='monitor';
+      stationsUI?.attach(mon?'monitor':'file',jid,summary.profile||{mode:'behavior'});
       const awaiting=summary.awaiting_analysis===true||summary.state==='uploaded';
       const active=!awaiting&&['capturing','extracting','running','queued'].includes(summary.state);
       if(mon){
@@ -1867,20 +1949,20 @@ $('#btn-agg').onclick = async ()=>{
 
 /* 行为定义 */
 async function loadYaml(){
-  try{ $('#yaml-box').value = (await api('/api/behaviors/raw')).text; }
+  try{ $('#yaml-box').value = (stationsUI?.available?await stationsUI.editorLoad():await api('/api/behaviors/raw')).text; }
   catch(e){ flash('读取失败：'+e.message,'err'); }
 }
 $('#btn-yaml-reload').onclick = ()=>{ loadYaml(); flash('已重新载入'); };
 $('#btn-save').onclick = async ()=>{
   try{
-    const r = await api('/api/behaviors/raw',{method:'POST',
+    const r = stationsUI?.available?await stationsUI.editorSave($('#yaml-box').value):await api('/api/behaviors/raw',{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({text:$('#yaml-box').value})});
-    flash(`已保存，启用 ${r.enabled} 项` + (r.pushed?'，下一次分析交给模型生效':''),'ok'); refresh();
+    flash(stationsUI?.available?'预设已保存，新任务使用此版本；已有任务保留原配置':`已保存，启用 ${r.enabled} 项` + (r.pushed?'，下一次分析交给模型生效':''),'ok'); refresh();
   }catch(e){ flash('保存失败：'+e.message,'err'); }
 };
 $('#btn-prompt').onclick = async ()=>{
-  try{ const r = await api('/api/behaviors/prompt');
+  try{ const r = stationsUI?.available?await stationsUI.editorPrompt():await api('/api/behaviors/prompt');
     $('#prompt-box').textContent = r.prompt; flash('已生成（模式 '+r.mode+'）'); }
   catch(e){ flash(e.message,'err'); }
 };
@@ -1915,6 +1997,7 @@ document.addEventListener('visibilitychange', async ()=>{
   if(!monJob) return;
   const s = await api('/api/job/' + monJob).catch(()=>null);
   if(!s || !['capturing','running','queued'].includes(s.state)) return;
+  if(s.profile?.mode==='workstation')return;
   if(document.hidden){
     hiddenPaused = true;
     try{
@@ -1932,7 +2015,9 @@ document.querySelector('aside button.active').setAttribute('aria-current','page'
 $('#m-src').setAttribute('aria-describedby','m-probe-msg');
 $('#m-probe-msg').setAttribute('aria-live','polite');
 $('#job-msg').setAttribute('role','status');$('#m-msg').setAttribute('role','status');
-updateDelayEstimate();updateControls();
+stationsUI=new WorkstationUI({api,flash,onChange:updateControls,onEditorChange:loadYaml,getJob:kind=>kind==='file'?uploadedJob:monJob,isBusy:kind=>kind==='file'?fileRunning:monitorRunning});
+$('#m-src').addEventListener('input',()=>{stationsUI.updateTask('monitor');updateControls();});
+stationsUI.init();updateDelayEstimate();updateControls();
 loadYaml();refresh();loadAgg();restoreSessionJobs().then(()=>loadVideoLibrary());
 setInterval(refresh,5000);
 </script>

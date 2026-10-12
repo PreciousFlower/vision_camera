@@ -685,6 +685,22 @@ class ServiceSession:
         result["roundtrip_sec"] = round(time.perf_counter() - started, 3)
         return result
 
+    def review_workstations(self, frames_b64, evidence, stations, people, profile=None):
+        import requests
+        from civility.station_review import validate_request, validate_result
+        payload={'frames':[{'b64':b} for b in frames_b64],'evidence':evidence,
+                 'stations':stations,'people':people,'max_new_tokens':(profile or {}).get('defaults',{}).get('max_new_tokens',1536),
+                 'behavior_rules':[{k:b.get(k) for k in ('id','name','definition','evidence_required','counter_examples')} for b in (profile or {}).get('behaviors',[]) if b.get('enabled',True)]}
+        checked=validate_request(payload)
+        try:
+            response=requests.post(f'{self.base_url()}/workstation-review',json=payload,timeout=120)
+            response.raise_for_status();result=response.json()
+            if not isinstance(result,dict) or result.get('error'): raise ValueError('工位模型核验失败：'+str(result.get('error') if isinstance(result,dict) else '响应格式错误'))
+            result['parsed']=validate_result(result.get('parsed'),checked)
+            return result
+        except (requests.exceptions.RequestException,ValueError) as exc:
+            raise ClusterError(f'工位复核请求失败：{exc}') from exc
+
     def reload_behaviors(self, behaviors_json_path: str) -> None:
         import requests
 

@@ -18,8 +18,8 @@ def main():
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         def respond(route):
-            if '/static/alert_speech.js' in route.request.url:
-                route.fulfill(status=200, content_type='text/javascript', body=(ROOT / 'webui/static/alert_speech.js').read_text(encoding='utf-8'))
+            if '/static/' in route.request.url:
+                route.fulfill(status=200, content_type='text/javascript', body=(ROOT / 'webui/static' / route.request.url.split('?')[0].rsplit('/',1)[-1]).read_text(encoding='utf-8'))
             elif '/api/state' in route.request.url:
                 route.fulfill(status=200, content_type='application/json', body=json.dumps(state))
             elif '/api/' in route.request.url:

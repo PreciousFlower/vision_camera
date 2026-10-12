@@ -43,6 +43,9 @@ def main() -> int:
         return 1
     html = HTML.read_text(encoding="utf-8")
     server = SERVER.read_text(encoding="utf-8") if SERVER.exists() else ""
+    scripts='\n'.join((HTML.parent/Path(src).name).read_text(encoding='utf-8') for src in re.findall(r'<script src="(/static/[^"]+)"',html))
+    source=html+'\n'+scripts
+    server+='\n'+(PROJECT/'webui/workstation_runner.py').read_text(encoding='utf-8')
 
     print("=" * 74)
     print("前端结构健康检查")
@@ -70,6 +73,9 @@ def main() -> int:
     handled = set(re.findall(r"\$\('#([A-Za-z0-9_-]+)'\)\s*[?]?\s*\.\s*onclick", html))
     handled |= set(re.findall(
         r"\$\('#([A-Za-z0-9_-]+)'\)\s*[?]?\s*\.\s*addEventListener", html))
+    handled |= set(re.findall(r"this\.q\('([^']+)'\)\.onclick",scripts))
+    for suffix in re.findall(r"this\.q\(prefix\+'([^']+)'\)\.onclick",scripts):
+        handled.update(prefix+suffix for prefix in ('m','f'))
     no_handler = sorted(set(btn_ids) - handled)
     check("所有按钮都绑定了点击处理器",
           not no_handler,
@@ -85,7 +91,7 @@ def main() -> int:
     #    所以这里干脆**凡是 '/api/...' 形式的字符串都算"前端会调的接口"**。
     #    代价是可能多算几个（比如注释里提到的路径），但宁多勿漏：
     #    漏掉一个就会让"接口对不上"这种低级问题溜到线上。
-    called = set(re.findall(r"""['"`](/api/[^'"`]*)""", html))
+    called = set(re.findall(r"""['"`](/api/[^'"`]*)""", source))
 
     def shape(path: str) -> str:
         """把路径归一成"形状"：变量段和数字段都算 `*`。
@@ -114,7 +120,7 @@ def main() -> int:
 
     norm = {shape(c) for c in called}
     routes = {shape(r) for r in
-              re.findall(r'@app\.(?:get|post|delete)\("(/api/[^"]+)"', server)}
+              re.findall(r'''@app\.(?:get|post|put|delete)\(['"](/api/[^'"]+)['"]''', server)}
     missing_routes = sorted(norm - routes)
     check("前端调用的接口后端都已实现",
           not missing_routes,

@@ -36,6 +36,7 @@ class VideoLibrary:
             folder = self.folder(job.job_id)
             folder.mkdir(parents=True, exist_ok=True)
             (folder / "windows.jsonl").write_text("", encoding="utf-8")
+            (folder / "frame_catalog.jsonl").write_text("", encoding="utf-8")
             self.save(job)
 
     def record(self, job, rec: dict) -> None:
@@ -43,12 +44,31 @@ class VideoLibrary:
             with (self.folder(job.job_id) / "windows.jsonl").open("a", encoding="utf-8") as out:
                 out.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
+    def register_frame(self, video_id, index, timestamp):
+        with self.lock:
+            self.load(video_id)
+            with (self.folder(video_id)/'frame_catalog.jsonl').open('a',encoding='utf-8') as out:
+                out.write(json.dumps({'index':index,'time_sec':timestamp})+'\n')
+
+    def _catalog_row(self, video_id, index):
+        path=self.folder(video_id)/'frame_catalog.jsonl'
+        if not path.exists(): return None
+        with path.open(encoding='utf-8') as source:
+            for line in source:
+                try: item=json.loads(line)
+                except ValueError: continue
+                if item.get('index')==index:
+                    t=item['time_sec']
+                    return {'window_id':f'station_frame_{index}','frame_indices':[index],
+                            'frame_labels':[f't={t:.6f}s'],'frame_times':[t]}
+        return None
+
     def save(self, job) -> None:
         with self.lock:
             folder = self.folder(job.job_id)
             folder.mkdir(parents=True, exist_ok=True)
             source_spec = getattr(job, "_archive_source", None) or job.source_spec
-            source = Path(source_spec).resolve() if source_spec else None
+            source = Path(source_spec).resolve() if source_spec and not job.is_live else None
             # Only uploaded file videos are exposed through this library.
             if source is not None and not source.is_relative_to(self.uploads_root):
                 source = None
@@ -162,6 +182,7 @@ class VideoLibrary:
         with self.lock:
             metadata, rows = self.snapshot(video_id)
             found = next((r for r in rows if index in (r.get("frame_indices") or [])), None)
+            if found is None: found=self._catalog_row(video_id,index)
             if found is None:
                 raise FileNotFoundError("该帧没有保存在分析记录中")
             return self._frame_from_row(video_id, found, index, metadata)

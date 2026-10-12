@@ -48,6 +48,12 @@ def main() -> int:
           f"共 {sum(len(b) for b in blocks)} 字符")
 
     bad = 0
+    for src in re.findall(r'<script[^>]+src=["\x27](/static/[^"\x27]+\.js)["\x27]', html):
+        path=HTML.parent/src.removeprefix('/static/')
+        r=subprocess.run([node,'--check',str(path)],capture_output=True,text=True)
+        if r.returncode:
+            bad+=1;print(f'  ❌ {path.name}: {(r.stderr or "")[:600]}')
+        else:print(f'  ✅ {path.name}：语法正确')
     for i, js in enumerate(blocks, 1):
         # 去掉可能的 src 引入的空块
         if not js.strip():

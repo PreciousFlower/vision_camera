@@ -341,6 +341,7 @@ class StreamReader:
         self._last_preview = 0.0
         self._last_encoded = 0.0
         self.history_jpegs = deque(maxlen=256)  # <=32s at 8fps; RAM only.
+        self.station_history = deque(maxlen=256)
         from .motion_highlights import MotionHighlights
         self.motion_highlights = MotionHighlights(limit=256)
 
@@ -360,6 +361,7 @@ class StreamReader:
         self._thread = None
         with self.lock:
             self.history_jpegs.clear()
+            self.station_history.clear()
             self.motion_highlights.clear()
             self.frame = None
             self.jpeg = None
@@ -412,6 +414,7 @@ class StreamReader:
                 if jpeg is not None:
                     self.jpeg = jpeg
                     self.history_jpegs.append((now, jpeg))
+                    self.station_history.append((time.monotonic(), now, jpeg))
                     self.motion_highlights.add(now, frame)
                 self.seq += 1
                 self.t = now

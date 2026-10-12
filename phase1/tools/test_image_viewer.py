@@ -60,8 +60,8 @@ def main() -> None:
 
         def respond(route):
             url = route.request.url
-            if '/static/alert_speech.js' in url:
-                route.fulfill(status=200, content_type='text/javascript', body=(ROOT / 'webui/static/alert_speech.js').read_text(encoding='utf-8'))
+            if '/static/' in url:
+                route.fulfill(status=200, content_type='text/javascript', body=(ROOT / 'webui/static' / url.split('?')[0].rsplit('/',1)[-1]).read_text(encoding='utf-8'))
             elif "/frames/" in url or "/fixture-frame" in url:
                 route.fulfill(status=200, content_type="image/svg+xml", body=frame(**fixture))
             elif "/api/" in url:

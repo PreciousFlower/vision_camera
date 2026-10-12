@@ -436,8 +436,12 @@ def _build_inputs(items: list[_Item]):
         bs = it.behaviors if it.behaviors is not None else STATE["behaviors"]
         imgs = decode_images(it.frames)
         if it.qa is not None:
-            from civility.video_qa import build_qa_messages
-            msgs = build_qa_messages(imgs, it.qa)
+            if it.qa.get('task_mode')=='workstation':
+                from civility.station_review import build_messages as build_station_messages
+                msgs=build_station_messages(imgs,it.qa)
+            else:
+                from civility.video_qa import build_qa_messages
+                msgs = build_qa_messages(imgs, it.qa)
         else:
             msgs = build_messages(bs, imgs, it.labels, with_few_shot=it.few_shot,
                               with_alert=it.with_alert,
@@ -514,7 +518,11 @@ def infer_batch(items: list[_Item]) -> list[dict]:
                             "batch": len(items)})
             continue
         if it.qa is not None:
-            from civility.video_qa import validate_answer
+            if it.qa.get('task_mode')=='workstation':
+                from civility.station_review import validate_result
+                validate_answer=lambda obj, evidence: validate_result(obj,it.qa)
+            else:
+                from civility.video_qa import validate_answer
             try:
                 parsed = validate_answer(obj, it.qa["evidence"])
                 ok, problems = True, []
@@ -589,6 +597,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {
                 "ok": True,
                 "behavior_protocol": 2,
+                "workstation_protocol": 1,
                 "video_qa_protocol": 1,
                 "hostname": socket.gethostname(),
                 "ready": STATE["ready"],
@@ -651,13 +660,16 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._json(500, {"error": f"{type(e).__name__}: {e}"})
 
-        if path == "/video-qa":
+        if path in ("/video-qa", "/workstation-review"):
             if not self._auth_ok():
                 return self._json(403, {"error": "token 不对"})
             if not STATE["ready"]:
                 return self._json(503, {"error": "模型未就绪"})
             try:
-                from civility.video_qa import validate_request
+                if path=='/workstation-review':
+                    from civility.station_review import validate_request
+                else:
+                    from civility.video_qa import validate_request
                 body = self._read_json()
                 qa = validate_request(body)
                 tokens = body.get("max_new_tokens", 768)

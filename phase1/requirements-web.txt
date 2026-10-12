@@ -5,6 +5,7 @@ fastapi
 uvicorn
 python-multipart
 opencv-python
+onnxruntime>=1.20,<2
 pillow
 kokoro-onnx>=0.6.1,<0.7
 misaki[zh]>=0.9.4,<1

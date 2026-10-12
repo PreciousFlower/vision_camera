@@ -43,6 +43,10 @@ def build_qa_messages(images: list, qa: dict) -> list[dict]:
         '"limitations":"抽样范围及无法确认的内容"}。正文尽量在200字内，最多6个直接相关引用，'
         '每条依据尽量在40字内。具体画面判断必须附引用，不编造帧或人物身份。'
     )
+    try: statistics=json.loads(qa.get('context','')).get('trusted_workstation_statistics')
+    except (ValueError,AttributeError): statistics=None
+    if isinstance(statistics,dict):
+        system+='本次另提供程序按连续采样计算的工位统计。累计时长、次数、人数必须直接引用该统计，不能由本次少量图片推算。所有时长用秒，最多1位小数，不换算分钟或小时。说明未知区间和匿名身份限制；use_mock=true时明确告知这是演示记录。画面引用用于解释对应进出时刻，不能声称单帧证明全部累计时长。'
     content = [{"type": "text", "text": json.dumps(
         {"question": qa["question"], "previous_analysis": qa.get("context", "")}, ensure_ascii=False)}]
     for image, evidence in zip(images, qa["evidence"]):

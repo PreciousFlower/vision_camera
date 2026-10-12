@@ -25,8 +25,8 @@ def main():
         def respond(route):
             nonlocal state,hold_next,held,starts,stops
             url=route.request.url
-            if url.endswith('/static/alert_speech.js'):
-                return route.fulfill(content_type='text/javascript',body=(ROOT/'webui/static/alert_speech.js').read_text(encoding='utf-8'))
+            if '/static/' in url:
+                return route.fulfill(content_type='text/javascript',body=(ROOT/'webui/static'/url.split('?')[0].rsplit('/',1)[-1]).read_text(encoding='utf-8'))
             if url.endswith('/api/state'):
                 if hold_next:hold_next=False;held=route;return
                 result=payload(state)
