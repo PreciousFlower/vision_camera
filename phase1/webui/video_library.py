@@ -16,6 +16,10 @@ from civility.extract import find_ffmpeg, sample_evenly
 _ID = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
 
+class RevisionConflict(ValueError):
+    pass
+
+
 class VideoLibrary:
     def __init__(self, root: Path, frames_root: Path, uploads_root: Path):
         self.root, self.frames_root, self.uploads_root = root.resolve(), frames_root.resolve(), uploads_root.resolve()
@@ -76,6 +80,15 @@ class VideoLibrary:
                     if isinstance(row, dict):
                         rows.append(row)
             return rows
+
+    def snapshot(self, video_id: str, revision: str = "") -> tuple[dict, list[dict]]:
+        with self.lock:
+            metadata = self.load(video_id)
+            rows = self.windows(video_id)
+            current = self.load(video_id).get("analysis_revision")
+            if current != metadata.get("analysis_revision") or (revision and current != revision):
+                raise RevisionConflict("视频已重新分析，请刷新证据")
+            return metadata, rows
 
     def list(self) -> list[dict]:
         items = []
@@ -146,13 +159,39 @@ class VideoLibrary:
         if not match:
             raise ValueError("帧编号不合法")
         index = int(match[1])
-        rows = self.windows(video_id)
-        found = next((r for r in rows if index in (r.get("frame_indices") or [])), None)
-        if found is None:
-            raise FileNotFoundError("该帧没有保存在分析记录中")
-        return self._frame_from_row(video_id, found, index)
+        with self.lock:
+            metadata, rows = self.snapshot(video_id)
+            found = next((r for r in rows if index in (r.get("frame_indices") or [])), None)
+            if found is None:
+                raise FileNotFoundError("该帧没有保存在分析记录中")
+            return self._frame_from_row(video_id, found, index, metadata)
 
-    def _frame_from_row(self, video_id: str, row: dict, index: int) -> tuple[Path, dict]:
+    def frame_bytes(self, video_id: str, frame_id: str, revision: str = "") -> bytes:
+        # Read before releasing the deletion/reanalysis lock. FileResponse reads
+        # later, after the route returns, and can otherwise serve another run.
+        with self.lock:
+            metadata = self.load(video_id)
+            if revision and revision != metadata.get("analysis_revision"):
+                raise RevisionConflict("视频已重新分析，请刷新证据")
+            path, _ = self.frame(video_id, frame_id)
+            data = path.read_bytes()
+            if self.load(video_id).get("analysis_revision") != metadata.get("analysis_revision"):
+                raise RevisionConflict("视频已重新分析，请刷新证据")
+            return data
+
+    def _frame_from_row(self, video_id: str, row: dict, index: int, metadata: dict | None = None) -> tuple[Path, dict]:
+        with self.lock:
+            # A caller may hold an old row while deletion or reanalysis wins.
+            # Check membership before reading a retained shared source or mkdir.
+            if metadata is None:
+                metadata, rows = self.snapshot(video_id)
+                if row not in rows:
+                    raise RevisionConflict("证据窗口已变更，请刷新证据")
+            elif self.load(video_id).get("analysis_revision") != metadata.get("analysis_revision"):
+                raise RevisionConflict("证据窗口已变更，请刷新证据")
+            return self._restore_frame(video_id, row, index, metadata)
+
+    def _restore_frame(self, video_id: str, row: dict, index: int, metadata: dict) -> tuple[Path, dict]:
         info = self.frame_info(row, index)
         candidate = self.frames_root / video_id / f"f_{index:05d}.jpg"
         if candidate.is_file() and candidate.resolve().is_relative_to(self.frames_root):
@@ -160,11 +199,16 @@ class VideoLibrary:
         restored = self.frames_root / video_id / "qa_recovered" / f"f_{index:05d}.jpg"
         if restored.is_file() and restored.resolve().is_relative_to(self.frames_root):
             return restored, info | {"recovered": True}
-        metadata = self.load(video_id)
         source = self.source(metadata)
         if source is None:
             raise FileNotFoundError("旧帧与原视频已清理，无法恢复这张证据画面")
         with self.lock:
+            # Recheck after source lookup as well; callbacks / another console
+            # may have removed the archive. Never recreate a deleted cache.
+            current = self.load(video_id)
+            if (current.get("analysis_revision") != metadata.get("analysis_revision")
+                    or current.get("source_path") != metadata.get("source_path")):
+                raise RevisionConflict("证据窗口已变更，请刷新证据")
             if not restored.exists():
                 restored.parent.mkdir(parents=True, exist_ok=True)
                 temp = restored.with_name(f"{restored.stem}-{uuid.uuid4().hex}.jpg")
@@ -198,7 +242,7 @@ class VideoLibrary:
                 "time_sec": timestamp, "window_id": row["window_id"], "recovered": False}
 
     def retrieve(self, video_id: str, question: str, limit: int = 18) -> tuple[list[dict], str, list[str]]:
-        rows = self.windows(video_id)
+        metadata, rows = self.snapshot(video_id)
         if not rows:
             raise ValueError("视频没有可用于问答的分析窗口")
         query = question.lower()
@@ -233,7 +277,7 @@ class VideoLibrary:
         per_window = max(2, limit // len(selected))
         for row in selected:
             indices = row.get("frame_indices") or []
-            candidates = sample_evenly(indices, per_window)
+            candidates = list(sample_evenly(indices, per_window))
             if indices:
                 essential.update([indices[0], indices[-1]])
             if requested_index is not None and requested_index in indices:
@@ -251,7 +295,7 @@ class VideoLibrary:
                     continue
                 seen.add(index)
                 try:
-                    path, info = self._frame_from_row(video_id, row, index)
+                    path, info = self._frame_from_row(video_id, row, index, metadata)
                     evidence.append(info | {"path": str(path)})
                 except (OSError, ValueError, subprocess.SubprocessError) as exc:
                     missing.append(str(exc))

@@ -50,6 +50,7 @@ class ServiceLifecycleTests(unittest.TestCase):
         self.http.json.return_value = {"ready": True, "model": "fixture", "device": "cpu"}
         self.patches = [patch.object(C, "Tunnel", return_value=self.tunnel),
                         patch.object(C, "time", types.SimpleNamespace(time=time.time,
+                            monotonic=time.monotonic,
                             sleep=Mock(side_effect=AssertionError("cancelled start entered wait")))),
                         patch("requests.get", return_value=self.http),
                         patch.object(S, "ensure_current_runtime"),

@@ -272,6 +272,22 @@ section.active { display: block; animation: fade .2s ease; }
 .video-delete-dialog::backdrop { background: #0006; }
 .video-delete-dialog p { font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; margin: 14px 0; }
 .video-delete-dialog .row { justify-content: flex-end; }
+.evidence-dialog { width:min(1000px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); overflow:auto; padding:24px; margin:auto; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--fg); }
+.evidence-dialog::backdrop { background:#10182899; }
+.evidence-dialog header { position:sticky; top:-24px; z-index:2; height:auto; padding:14px 0; display:flex; align-items:center; justify-content:space-between; gap:16px; background:var(--panel); }
+.evidence-dialog video { width:100%; max-height:330px; margin:16px 0; background:#111; }
+.evidence-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:12px; margin:16px 0; }
+.evidence-grid figure { margin:0; padding:8px; border:1px solid var(--line); border-radius:6px; }
+.evidence-grid figure.anchor { border-color:var(--accent); background:#f2f6fb; }
+.evidence-grid img { width:100%; height:108px; object-fit:contain; background:#eef1f5; cursor:zoom-in; }
+.evidence-grid figcaption { font-size:11px; line-height:1.8; overflow-wrap:anywhere; }
+.feedback-form { border-top:1px solid var(--line); padding-top:18px; }
+.feedback-form .row { flex-wrap:wrap; margin:10px 0; }
+.feedback-form label { font-size:12px; }
+.feedback-form textarea { width:100%; min-height:70px; margin:10px 0; }
+.feedback-labels button.selected { color:var(--accent); border-color:var(--accent); background:#eef4fb; }
+.feedback-summary { white-space:pre-wrap; font-size:12px; color:var(--dim); margin:12px 0; }
+.evidence-focus { outline:3px solid #4b73a366; outline-offset:3px; }
 .yaml-editor { background: #fafafa !important; color: #333; }
 .service-controls select { flex: 1; }
 @media (min-width: 1700px) {
@@ -549,6 +565,7 @@ section.active { display: block; animation: fade .2s ease; }
       <div style="margin-top:10px;font-size:14px">点击选择视频，或拖拽文件到这里</div>
       <div class="muted" style="margin-top:6px;font-size:12.5px">
         支持 mp4 / avi / mkv / mov · 手机拍 30 秒即可
+        <span id="upload-limit"> · 单文件上限 1024 MB</span>
       </div>
     </div>
     <input type="file" id="file" accept="video/*" style="display:none">
@@ -715,6 +732,21 @@ section.active { display: block; animation: fade .2s ease; }
   <div class="image-viewer-toolbar"><span id="image-viewer-title" class="image-viewer-title">完整画面</span><button id="image-viewer-close" class="btn sm" type="button" autofocus>关闭 · Esc</button></div>
   <img id="image-viewer-image" alt="">
 </dialog>
+<dialog id="evidence-dialog" class="evidence-dialog" aria-labelledby="evidence-title">
+  <header><h3 id="evidence-title">告警证据与人工复核</h3><button id="evidence-close" class="btn ghost sm" type="button">关闭 · Esc</button></header>
+  <p id="evidence-info" class="muted"></p><p id="evidence-warning" class="muted"></p>
+  <video id="evidence-player" controls playsinline preload="metadata"></video>
+  <div class="row"><button id="evidence-locate" class="btn ghost sm">定位分析窗口</button><button id="feedback-export" class="btn ghost sm">导出本任务反馈</button></div>
+  <div id="evidence-grid" class="evidence-grid"></div>
+  <div class="feedback-form">
+    <h3>人工反馈</h3><p class="muted">标签单独保存，保留大模型原始结论；不会自动改动模型或告警策略。</p>
+    <div class="row"><label>复核行为 <select id="feedback-behavior"></select></label><label>证据帧 <select id="feedback-frame"></select></label></div>
+    <div id="feedback-labels" class="row feedback-labels"><button class="btn ghost sm" data-label="correct">正确</button><button class="btn ghost sm" data-label="false_positive">误报</button><button class="btn ghost sm" data-label="missed">漏报</button></div>
+    <textarea id="feedback-note" maxlength="1000" placeholder="可填写理由，例如手中物品为指甲剪，并非香烟"></textarea>
+    <div class="row"><button id="feedback-save" class="btn sm">保存反馈</button><span id="feedback-status" class="muted" role="status"></span></div>
+    <div id="feedback-summary" class="feedback-summary"></div>
+  </div>
+</dialog>
 <dialog id="video-delete-dialog" class="video-delete-dialog" aria-labelledby="video-delete-title">
   <h3 id="video-delete-title">删除这个视频？</h3>
   <p id="video-delete-name"></p>
@@ -738,6 +770,8 @@ let serviceAction=null, serviceEpoch=0, serviceRefreshQueued=false, serviceSnaps
 const alertStore = {monitor:[], file:[]};
 const severityLabels = {high:'高风险', medium:'中风险', low:'低风险'};
 let qaPending=false, qaDeleting=false, historyLoading=false, qaVideos=[], libraryRequest=0, analysisRequest=0, deleteVideoId=null;
+let uploadMaxBytes=1024*1024*1024;
+let evidenceContext=null,evidenceRequest=0,feedbackLabel=null,feedbackSaving=false;
 const speech=new AlertSpeech({onStatus:text=>{$('#speech-status').textContent=text;}});
 const newSpeechRuns=new Set();
 try{$('#speech-enabled').checked=localStorage.getItem('civility-speech-enabled')!=='false';}catch(e){}
@@ -784,7 +818,7 @@ function updateControls(){
   $('#m-cams').disabled = monitorStarting || monitorRunning;
   $('#btn-detect').disabled = runtimeOutdated || restoringJobs || uploading || fileRunning || qaPending || qaDeleting || historyLoading || !uploadedJob || (!serviceReady && !$('#f-mock').checked);
   $('#btn-abort').disabled = !fileRunning;
-  $('#file').disabled = fileRunning || uploading || qaPending || qaDeleting || historyLoading;
+  $('#file').disabled = runtimeOutdated || fileRunning || uploading || qaPending || qaDeleting || historyLoading;
   $('#m-mock').disabled = monitorStarting || monitorRunning;
   $('#f-mock').disabled = fileRunning;
   $('#m-scene').disabled = monitorStarting || monitorRunning;
@@ -851,7 +885,7 @@ function renderServiceState(status,cost={}){
     :serviceAction==='starting'?{...status,state:'submitting',message:'正在提交服务启动请求…'}:status;
   const map={idle:['模型未启动',''],ready:['模型就绪','ok'],running:['隧道就绪','ok'],
     pending:['排队中','warn'],submitting:['提交中','warn'],stopping:['正在停止并释放节点','warn'],
-    error:[s.release_pending?'释放失败，可重试':'启动失败','err'],stopped:['已停止','']};
+    error:[s.release_pending?'释放失败，可重试':'启动失败','err'],unreachable:['模型连接异常','err'],stopped:['已停止','']};
   const m=closing&&!serviceAction?['启动线程收尾中','warn']:(map[s.state]||[s.state,'']);
   serviceReady=s.state==='ready';
   setChip('#c-svc',m[0]+(s.node&&s.state!=='stopped'?' · '+s.node:''),m[1]);
@@ -865,7 +899,7 @@ function renderServiceState(status,cost={}){
                  +`（${esc(cost.price_per_hour)} 元/卡时）`:'—')
     }).map(([k,v])=>`${esc(k)}：<b>${k==='估算花费'?v:esc(v??'—')}</b>`).join('<br>');
 
-  const busy=['ready','running','pending','submitting','stopping'].includes(s.state);
+  const busy=['ready','running','pending','submitting','stopping','unreachable'].includes(s.state);
   $('#btn-start').disabled=!!serviceAction||runtimeOutdated||busy||!!s.release_pending||!!s.start_worker_alive;
   $('#btn-stop').disabled=!!serviceAction||(!busy&&!s.release_pending);
   $('#svc-bar').style.width=s.state==='ready'?'100%':(['running','pending','submitting','stopping'].includes(s.state)?'55%':'0%');
@@ -889,6 +923,8 @@ async function refresh(){
       ? '新版识别规则尚未在这个本机服务生效，已暂停新分析。请在原启动终端按 Ctrl+C，再重新启动网页服务并刷新此页。仅刷新网页或启动另一个端口，不能更新当前旧进程。旧结果需重新分析。'
       : '';
     const s = st.service || {state:'idle'};
+    if(Number.isFinite(st.upload?.max_bytes)&&st.upload.max_bytes>0)uploadMaxBytes=st.upload.max_bytes;
+    $('#upload-limit').textContent=` · 单文件上限 ${(uploadMaxBytes/1024/1024).toFixed(0)} MB`;
     serviceReady = s.state==='ready';
     stateFailed = false; $('#connection-note').style.display='none';
     document.querySelectorAll('.heading-badge').forEach(el=>{el.innerHTML='<i class="dot"></i>'+((st.aggregate||{}).open_risks===false?'配置行为告警':'行为识别 · 风险研判');});
@@ -1431,6 +1467,8 @@ function windowCard(d,jid){
     sequence.querySelectorAll('.sequence-frame').forEach(img=>img.onclick=()=>openImageViewer(img));
     div.append(sequence);
   }
+  const review=document.createElement('button');review.className='btn ghost sm';review.style.marginTop='12px';review.textContent='查看证据 / 标记漏报';
+  review.onclick=()=>openEvidence(jid,d.window_id,'',d.archive_revision||'');div.append(review);
   return div;
 }
 function addAction(d,jid){
@@ -1452,8 +1490,10 @@ drop.ondrop = e=>{ e.preventDefault(); drop.classList.remove('over');
 fileInput.onchange = ()=>{ if(fileInput.files[0]) doUpload(fileInput.files[0]); };
 
 async function doUpload(f){
+  if(runtimeOutdated)return flash('请先使用已更新的本机服务，再上传视频','warn');
   if(fileRunning||uploading||qaPending||qaDeleting||historyLoading)return flash('当前视频正在处理，请等待完成或先中止','warn');
   if(!/\.(mp4|avi|mkv|mov|webm|m4v|mpeg|mpg)$/i.test(f.name)&&!f.type.startsWith('video/'))return flash('请选择视频文件','err');
+  if(f.size>uploadMaxBytes)return flash(`视频过大，单文件上限 ${(uploadMaxBytes/1024/1024).toFixed(0)} MB`,'err');
   uploading=true;updateControls();
   const fd = new FormData(); fd.append('file', f);
   $('#up-info').textContent = '上传中…';
@@ -1465,7 +1505,7 @@ async function doUpload(f){
     $('#video-results-title').textContent='分析结果 · '+f.name;
     $('#up-info').textContent = `${f.name} · ${r.size_mb} MB`;
     clearFileHistory();$('#job-msg').textContent='上传完成 · 等待分析';
-    saveSessionJob('file',null);flash('上传完成','ok');
+    saveSessionJob('file',uploadedJob);flash('上传完成','ok');
   }catch(e){ flash('上传失败：'+e.message,'err'); $('#up-info').textContent='上传失败：'+e.message; }
   finally{uploading=false;updateControls();}
 }
@@ -1647,11 +1687,16 @@ function paintAlerts(mon){
     $(box).innerHTML=emptyState(retained?'当前筛选下没有告警':'暂无需要关注的告警',retained?'调整来源或风险等级，查看其他告警。':'AI 会结合可见证据与告警策略判断，后续结果会自动更新。','✓');
     return;
   }
-  $(box).innerHTML=visible.slice().reverse().map(a=>{
+  const ordered=visible.slice().reverse();
+  $(box).innerHTML=ordered.map((a,i)=>{
     const source=alertSource(a),severity=severityLabels[a.severity]?a.severity:'medium';
     const evidenceTime=typeof a.evidence_time_sec==='number'&&Number.isFinite(a.evidence_time_sec)&&a.evidence_time_sec>=0?`<div class="ev">证据时刻 ${a.evidence_time_sec.toFixed(2)}秒</div>`:'';
     return `<article class="alert ${severity}"><div class="t">${esc(a.behavior_name||'现场风险')}<span class="tag sev-${severity}">${severityLabels[severity]}</span><span class="tag ${source==='ai_risk'?'risk-source':'rule-source'}">${source==='ai_risk'?'AI 风险':'配置行为'}</span></div><div class="meta">查看范围 ${esc(a.t_start)}s – ${esc(a.t_end)}s · ${a.hits!=null&&a.span!=null?`命中 ${esc(a.hits)}/${esc(a.span)} · `:''}置信度 ${confidenceText(a.max_confidence??a.confidence)}${a.person_desc?' · '+esc(a.person_desc):''}</div>${evidenceTime}${a.reason?`<div class="reason"><b>判断理由</b> · ${esc(a.reason)}</div>`:''}${(Array.isArray(a.evidences)?a.evidences:[]).map(e=>`<div class="ev">可见证据 · ${esc(e)}</div>`).join('')}</article>`;
   }).join('');
+  $(box).querySelectorAll('article.alert').forEach((card,i)=>{
+    const a=ordered[i],button=document.createElement('button');button.className='btn ghost sm';button.style.marginTop='10px';button.textContent='查看前后证据 / 复核';
+    button.disabled=!a.window_ids?.length;button.onclick=()=>openEvidence(mon?monJob:currentJob,a.window_ids[0],a.behavior_id||'');card.append(button);
+  });
 }
 function markAlertWindows(mon){
   const ids=new Set(alertStore[mon?'monitor':'file'].flatMap(a=>Array.isArray(a.window_ids)?a.window_ids:[]));
@@ -1677,6 +1722,86 @@ $('#f-alert-severity').onchange=()=>paintAlerts(false);
 $('#m-alert-export').onclick=()=>exportAlerts(true);
 $('#f-alert-export').onclick=()=>exportAlerts(false);
 
+async function openEvidence(jid,windowId,behaviorId='',revision=''){
+  if(!jid||!windowId)return flash('该告警缺少窗口引用，无法定位证据','warn');
+  const request=++evidenceRequest;evidenceContext=null;feedbackLabel=null;
+  $('#evidence-grid').replaceChildren();$('#feedback-summary').textContent='';$('#feedback-status').textContent='';$('#feedback-note').value='';
+  $('#feedback-behavior').replaceChildren();$('#feedback-frame').replaceChildren();$('#feedback-save').disabled=true;
+  $('#evidence-info').textContent='正在读取对应窗口和前后证据帧…';$('#evidence-warning').textContent='';
+  const player=$('#evidence-player');player.pause();player.removeAttribute('src');player.style.display='none';
+  if(!$('#evidence-dialog').open)$('#evidence-dialog').showModal();
+  $('#evidence-dialog').scrollTop=0;
+  try{
+    const evidence=await api(`/api/evidence/${encodeURIComponent(jid)}?window_id=${encodeURIComponent(windowId)}&behavior_id=${encodeURIComponent(behaviorId)}&revision=${encodeURIComponent(revision)}`);
+    if(request!==evidenceRequest||!$('#evidence-dialog').open)return;
+    evidenceContext=evidence;
+    $('#evidence-info').textContent=`${evidence.filename||jid} · 窗口 ${windowId}${evidence.use_mock?' · 演示结论':''} · 前后抽样证据（不代表完整逐帧检查）`;
+    $('#evidence-warning').textContent=(evidence.warnings||[]).join('；')+(evidence.is_live?' 摄像头仅保留抽样帧，未录制原始视频。':!evidence.source_available?' 原视频不可用，可查看仍保留的证据帧。':'');
+    if(evidence.source_url){player.src=evidence.source_url;player.style.display='block';player.onerror=()=>{$('#evidence-warning').textContent='浏览器无法播放原视频，请查看证据帧。';};}
+    const frames=evidence.frames||[];
+    $('#evidence-grid').innerHTML=frames.map((frame,i)=>`<figure class="${frame.is_anchor?'anchor':''}"><img src="${esc(frame.image_url)}" alt="${Number(frame.time_sec).toFixed(2)}秒 · 抽样第 ${esc(frame.sample_number)} 帧" data-frame="${i}" tabindex="0" role="button"><figcaption>${frame.is_anchor?'对应窗口':'前后窗口'} · ${esc(frame.window_id)}<br>${Number(frame.time_sec).toFixed(2)} 秒 · 抽样第 ${esc(frame.sample_number)} 帧</figcaption><button class="btn ghost sm" data-evidence-seek="${i}">跳转此时刻</button> <a class="btn ghost sm" href="${esc(frame.image_url)}" download="${esc(jid)}-${esc(frame.frame_id)}.jpg">下载截图</a></figure>`).join('')||emptyState('没有可定位的证据帧','旧记录缺少可靠时间，或证据已经清理。');
+    $('#evidence-grid').querySelectorAll('img').forEach(img=>{img.onclick=()=>openImageViewer(img);img.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openImageViewer(img);}};img.onerror=()=>{img.removeAttribute('role');img.onclick=null;img.alt='证据帧已清理或不可用';};});
+    $('#evidence-grid').querySelectorAll('[data-evidence-seek]').forEach(button=>{button.disabled=!evidence.source_url;button.onclick=()=>seekEvidence(frames[Number(button.dataset.evidenceSeek)].time_sec);});
+    const behaviorSelect=$('#feedback-behavior');
+    for(const [id,name] of Object.entries(evidence.behaviors||{}))behaviorSelect.append(new Option(name,id));
+    const preferred=behaviorId||Object.keys(evidence.model_results||{}).find(id=>evidence.model_results[id]?.violation||evidence.model_results[id]?.alert)||behaviorSelect.value;
+    if([...behaviorSelect.options].some(option=>option.value===preferred))behaviorSelect.value=preferred;
+    $('#feedback-frame').append(new Option('整个窗口（未指定单帧）',''));
+    for(const frame of frames.filter(f=>f.is_anchor))$('#feedback-frame').append(new Option(`${Number(frame.time_sec).toFixed(2)} 秒 · 抽样第 ${frame.sample_number} 帧`,frame.frame_id));
+    loadFeedbackSelection();
+    const anchor=frames.find(f=>f.is_anchor);if(anchor&&evidence.source_url)seekEvidence(anchor.time_sec);
+  }catch(e){if(request===evidenceRequest){$('#evidence-info').textContent='读取证据失败：'+e.message;$('#feedback-save').disabled=true;}}
+}
+function seekEvidence(time){
+  const player=$('#evidence-player');
+  if(!Number.isFinite(time)||time<0)return;
+  if(player.readyState>=1)player.currentTime=time;
+  else {const url=player.getAttribute('src');player.addEventListener('loadedmetadata',()=>{if(player.getAttribute('src')===url)player.currentTime=time;},{once:true});}
+}
+function loadFeedbackSelection(){
+  const id=$('#feedback-behavior').value;
+  const previous=evidenceContext?.feedback?.find(item=>item.behavior_id===id);
+  feedbackLabel=previous?.label||null;$('#feedback-note').value=previous?.note||'';$('#feedback-frame').value=previous?.frame?.frame_id||'';
+  $('#feedback-labels').querySelectorAll('button').forEach(button=>button.classList.toggle('selected',button.dataset.label===feedbackLabel));
+  $('#feedback-save').disabled=feedbackSaving||runtimeOutdated||!evidenceContext||!id||!feedbackLabel;
+  const labelNames={correct:'正确',false_positive:'误报',missed:'漏报'};
+  const result=evidenceContext?.model_results?.[id];
+  $('#feedback-summary').textContent=(previous?`已保存人工标签：${labelNames[previous.label]}${previous.note?' · '+previous.note:''}\n`:'')+(result?`大模型原始判断：${result.violation===true||result.alert===true?'行为命中':'未确认行为'} · ${result.observable||result.alert_reason||'无补充描述'}`:'该窗口没有此行为的模型判断，可标记漏报。');
+}
+$('#feedback-behavior').onchange=loadFeedbackSelection;
+$('#feedback-labels').querySelectorAll('button').forEach(button=>button.onclick=()=>{
+  feedbackLabel=button.dataset.label;$('#feedback-labels').querySelectorAll('button').forEach(other=>other.classList.toggle('selected',other===button));
+  $('#feedback-save').disabled=feedbackSaving||runtimeOutdated||!evidenceContext||!$('#feedback-behavior').value;
+});
+$('#feedback-save').onclick=async()=>{
+  const context=evidenceContext;if(!context||!feedbackLabel||feedbackSaving)return;
+  const body={analysis_revision:context.analysis_revision,window_id:context.window_id,behavior_id:$('#feedback-behavior').value,label:feedbackLabel,note:$('#feedback-note').value,frame_id:$('#feedback-frame').value||null};
+  feedbackSaving=true;$('#feedback-save').disabled=true;$('#feedback-status').textContent='保存中…';
+  try{
+    const result=await api(`/api/feedback/${encodeURIComponent(context.job_id)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    context.feedback=(context.feedback||[]).filter(item=>item.behavior_id!==body.behavior_id);context.feedback.push(result.feedback);
+    if(evidenceContext===context){$('#feedback-status').textContent='已保存，可再次修改';loadFeedbackSelection();}
+  }catch(e){if(evidenceContext===context)$('#feedback-status').textContent='保存失败：'+e.message;}
+  finally{feedbackSaving=false;if(evidenceContext===context)$('#feedback-save').disabled=runtimeOutdated||!feedbackLabel;}
+};
+$('#feedback-export').onclick=async()=>{
+  const context=evidenceContext;if(!context)return;
+  try{
+    const result=await api(`/api/feedback/${encodeURIComponent(context.job_id)}`);
+    const url=URL.createObjectURL(new Blob([JSON.stringify(result,null,2)],{type:'application/json;charset=utf-8'}));
+    const link=document.createElement('a');link.href=url;link.download=`${context.job_id}-feedback.json`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }catch(e){flash('导出反馈失败：'+e.message,'err');}
+};
+$('#evidence-locate').onclick=()=>{
+  if(!evidenceContext)return;
+  const feed=$(evidenceContext.is_live?'#m-feed':'#windows');
+  const card=[...feed.querySelectorAll('.act')].find(item=>item.dataset.windowId===evidenceContext.window_id);
+  if(!card)return flash('对应窗口已不在当前页面，证据仍可在此查看','warn');
+  $('#evidence-dialog').close();card.scrollIntoView({block:'center',behavior:'smooth'});card.classList.add('evidence-focus');setTimeout(()=>card.classList.remove('evidence-focus'),4000);
+};
+$('#evidence-close').onclick=()=>$('#evidence-dialog').close();
+$('#evidence-dialog').addEventListener('close',()=>{evidenceRequest++;evidenceContext=null;const player=$('#evidence-player');player.pause();player.removeAttribute('src');player.load();});
+
 function saveSessionJob(kind,jid){
   try{if(jid)sessionStorage.setItem('zhixun-'+kind,jid);else sessionStorage.removeItem('zhixun-'+kind);}catch(e){}
 }
@@ -1686,7 +1811,8 @@ async function restoreSessionJobs(){
     try{
       const summary=await api('/api/job/'+encodeURIComponent(jid));
       const mon=kind==='monitor';
-      const active=['capturing','running','queued'].includes(summary.state);
+      const awaiting=summary.awaiting_analysis===true||summary.state==='uploaded';
+      const active=!awaiting&&['capturing','extracting','running','queued'].includes(summary.state);
       if(mon){
         monJob=jid;monitorRunning=active;clearMonitorHistory();$('#m-feed').innerHTML='';$('#m-mock').checked=!!summary.use_mock;
         $('#m-scene').value=summary.mock_scene||'';$('#m-scene').style.display=summary.use_mock?'':'none';
@@ -1700,6 +1826,7 @@ async function restoreSessionJobs(){
       if(records.length && !mon) $('#windows').innerHTML='';
       records.forEach((record,i)=>{
         const d={...record,index:i+1,cumulative:(summary.windows_seen||records.length)-records.length+i+1,progress:summary.progress};
+        if(!mon&&!active&&summary.analysis_revision)d.archive_revision=summary.analysis_revision;
         d.hits=Object.entries(record.violations||{}).filter(([,v])=>v.violation).map(([id,v])=>({name:(summary.alerts||[]).find(a=>a.behavior_id===id)?.behavior_name||id,...v}));
         if(mon)addAction(d,jid);else $('#windows').prepend(windowCard(d,jid));
       });
@@ -1708,7 +1835,7 @@ async function restoreSessionJobs(){
       else $('#job-msg').textContent=summary.message||'已恢复分析';
       renderAlerts(summary.alerts||[],mon);
       if(active){if(mon){streamMonitor(jid);startLiveView(jid);}else streamJob(jid);}
-      else saveSessionJob(kind,null);
+      else if(!awaiting)saveSessionJob(kind,null);
     }catch(e){saveSessionJob(kind,null);flash('无法恢复上次任务：'+e.message,'warn');}
   }
   restoringJobs=false;updateControls();

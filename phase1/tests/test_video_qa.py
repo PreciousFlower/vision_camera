@@ -224,6 +224,7 @@ class LibraryApiTests(unittest.TestCase):
         evidence, context, _ = self.library.retrieve(self.job.job_id, "吸烟发生在哪里")
         self.assertEqual([e["frame_id"] for e in evidence], ["f_0", "f_9", "f_17"])
         self.assertNotIn("w-normal", context)
+        self.assertEqual(self.library.windows(self.job.job_id)[0]["frame_indices"], [0, 9, 17])
 
 
 if __name__ == "__main__":

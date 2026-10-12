@@ -71,8 +71,10 @@ from fastapi.responses import (  # noqa: E402
 )
 
 from .cluster_client import ClusterClient, ClusterError, ServiceSession  # noqa: E402
-from .video_library import VideoLibrary  # noqa: E402
+from .video_library import VideoLibrary, RevisionConflict  # noqa: E402
 from .speech_service import SpeechService, validate_speech  # noqa: E402
+from .uploads import UploadGuard, DEFAULT_MAX_BYTES, save_upload, load_upload, manifest  # noqa: E402
+from .alert_feedback import FeedbackStore, evidence_rows, evidence_frames  # noqa: E402
 
 QA_BUSY = threading.Lock()
 SPEECH = SpeechService()
@@ -86,6 +88,15 @@ def _library_for(results: str, frames: str, data: str) -> VideoLibrary:
 def video_library() -> VideoLibrary:
     paths = STATE.cfg["paths"]
     return _library_for(str(paths["results_dir"]), str(paths["frames_dir"]), str(paths["data_dir"]))
+
+
+@functools.lru_cache(maxsize=8)
+def _feedback_for(root: str) -> FeedbackStore:
+    return FeedbackStore(Path(root) / "alert_feedback")
+
+
+def feedback_store() -> FeedbackStore:
+    return _feedback_for(str(STATE.cfg["paths"]["results_dir"]))
 
 
 def archive_window(job, rec: dict) -> None:
@@ -109,7 +120,7 @@ def runtime_source_signature() -> str:
     files = sorted((PROJECT / "civility").glob("*.py")) + sorted(
         (PROJECT / "cluster").glob("*.py")) + [
         Path(__file__), HERE / "cluster_client.py", HERE / "capture.py", HERE / "video_library.py",
-        HERE / "motion_highlights.py", HERE / "speech_service.py",
+        HERE / "motion_highlights.py", HERE / "speech_service.py", HERE / "uploads.py", HERE / "alert_feedback.py",
         PROJECT / "cluster/serve-vlm.sbatch"]
     digest = hashlib.sha256()
     for path in files:
@@ -237,6 +248,9 @@ class JobRecord:
             "mock_scene": self.mock_scene,
             "loop": self.loop,
             "windows_seen": self.windows_seen,
+            "awaiting_analysis": self.state in ("uploaded", "queued") and not job_is_active(self),
+            "worker_active": job_is_active(self),
+            "analysis_revision": getattr(self, "_analysis_revision", ""),
         }
 
 
@@ -365,9 +379,37 @@ def check_orphans() -> list[dict]:
     return STATE.orphans
 
 
+def job_is_active(job) -> bool:
+    worker = getattr(job, "_detect_worker", None)
+    return (job.state in ("capturing", "extracting", "running")
+            or (job.state == "queued" and getattr(job, "_detect_start_reserved", False))
+            or bool(worker and worker.is_alive()))
+
+
 def _active_job() -> bool:
-    return QA_BUSY.locked() or any(j.state in ("capturing", "extracting", "running", "queued")
-               for j in STATE.jobs.copy().values())
+    return QA_BUSY.locked() or any(job_is_active(j) for j in STATE.jobs.copy().values())
+
+
+def upload_limit() -> int:
+    raw = (STATE.cfg.get("upload") or {}).get("max_bytes", DEFAULT_MAX_BYTES)
+    return raw if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0 else DEFAULT_MAX_BYTES
+
+
+def service_is_ready(sess) -> bool:
+    return sess is not None and sess.state == "ready" and (
+        not isinstance(sess, ServiceSession) or sess.status()["state"] == "ready")
+
+
+def recover_upload(job_id: str):
+    if job_id in STATE.jobs:
+        return STATE.jobs[job_id]
+    try:
+        path, filename = load_upload(Path(STATE.cfg["paths"]["data_dir"]) / "uploads", job_id)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    job = JobRecord(job_id, filename, state="uploaded", message="上传已恢复，可重新开始分析")
+    STATE.jobs[job_id], STATE.uploads[job_id] = job, path
+    return job
 
 
 def watchdog_tick() -> str:
@@ -1052,6 +1094,7 @@ def run_job(job_id: str) -> None:
     验证整条监测链路（采集 → 推理 → SSE → 页面渲染）。
     """
     job = STATE.jobs[job_id]
+    job._analysis_revision = uuid.uuid4().hex
     video_label = job.filename
     # 持续监测复用一条实时流（见 LiveStream：每批重开要白花 2.9 秒握手）
     stream: LiveStream | None = (
@@ -1063,7 +1106,7 @@ def run_job(job_id: str) -> None:
     next_cap = None
     try:
         sess = STATE.session if not job.use_mock else None
-        if not job.use_mock and (sess is None or sess.state != "ready"):
+        if not job.use_mock and not service_is_ready(sess):
             raise ClusterError("推理服务未就绪，请先在「服务」页启动")
 
         job._archive_enabled = False
@@ -1674,6 +1717,7 @@ def run_job(job_id: str) -> None:
 
 def create_app():
     app = FastAPI(title="不文明行为识别 · 本地控制台")
+    app.add_middleware(UploadGuard, limit=upload_limit)
 
     # ── 页面 ──
     @app.get("/", response_class=HTMLResponse)
@@ -1703,8 +1747,7 @@ def create_app():
     def archived_video(video_id: str) -> tuple[VideoLibrary, dict]:
         library = video_library()
         job = STATE.jobs.get(video_id)
-        if job is not None and (job.state in ("queued", "extracting", "running", "capturing")
-                                or (getattr(job, "_detect_worker", None) is not None and job._detect_worker.is_alive())):
+        if job is not None and job_is_active(job):
             raise HTTPException(409, "视频仍在分析，请等本轮结束后提问")
         try:
             metadata = library.load(video_id)
@@ -1746,13 +1789,13 @@ def create_app():
     def api_video_analysis(video_id: str):
         library, metadata = archived_video(video_id)
         try:
-            rows = library.windows(video_id)
+            metadata, rows = library.snapshot(video_id, metadata.get("analysis_revision", ""))
             names = {b.id: b.name for b in STATE.behaviors.behaviors}
             visible = []
             for index, row in enumerate(rows[-200:], start=max(0, len(rows) - 200) + 1):
                 # Expose the same presentation fields as a live window, no paths.
                 record = {key: row.get(key) for key in (
-                    "window_id", "t_start", "t_end", "frames", "frame_indices", "frame_labels",
+                    "window_id", "t_start", "t_end", "frames", "frame_indices", "frame_labels", "frame_times",
                     "scene", "people", "risks", "evidence_warnings", "verification", "error",
                     "latency", "tokens_out", "sampling", "skipped")}
                 record["index"] = index
@@ -1764,6 +1807,8 @@ def create_app():
                 visible.append(record)
             return {**library.public(metadata), "window_results": visible,
                     "displayed_windows": len(visible)}
+        except RevisionConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
         except (OSError, ValueError) as exc:
             raise HTTPException(404, "视频分析记录已删除或不可用") from exc
 
@@ -1775,9 +1820,14 @@ def create_app():
         try:
             with STATE.lock:
                 library, metadata = archived_video(video_id)
-                removed = library.delete(video_id)
+                with feedback_store().deleting(video_id):
+                    removed = library.delete(video_id)
                 STATE.jobs.pop(video_id, None)
                 STATE.uploads.pop(video_id, None)
+                try:
+                    manifest(library.uploads_root, video_id).unlink(missing_ok=True)
+                except ValueError:
+                    pass
             return {"ok": True, **removed,
                     "message": "已删除该视频的本机分析记录、证据帧和独立上传副本"
                     if not removed["source_retained"] else "已删除记录和证据帧；共享或迁移的视频文件予以保留"}
@@ -1804,8 +1854,10 @@ def create_app():
         if revision and revision != metadata.get("analysis_revision"):
             raise HTTPException(409, "视频已重新分析，请重新提问以更新证据")
         try:
-            path, _ = library.frame(video_id, frame_id)
-            return FileResponse(str(path), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+            data = library.frame_bytes(video_id, frame_id, revision or metadata.get("analysis_revision", ""))
+            return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+        except RevisionConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         except (OSError, subprocess.SubprocessError) as exc:
@@ -1818,7 +1870,7 @@ def create_app():
         if not isinstance(question, str) or not question.strip() or len(question) > 2000:
             raise HTTPException(400, "请输入 1 至 2000 字的问题")
         sess = STATE.session
-        if sess is None or sess.state != "ready":
+        if not service_is_ready(sess):
             raise HTTPException(503, "请先启动推理服务；视频问答使用部署的大模型")
         if not QA_BUSY.acquire(blocking=False):
             raise HTTPException(429, "已有视频问答正在处理，请等回答完成后再提问")
@@ -1857,15 +1909,97 @@ def create_app():
         finally:
             QA_BUSY.release()
 
+    # ── 告警证据与人工复核（不会改变模型结论或告警策略） ──
+    def evidence_snapshot(job_id: str, revision: str = ""):
+        library = video_library()
+        job = STATE.jobs.get(job_id)
+        if job and (job.is_live or job_is_active(job)):
+            current = getattr(job, "_analysis_revision", "")
+            if not current or (revision and revision != current):
+                raise HTTPException(409, "分析版本已变化，请重新打开证据")
+            return job.summary(), list(job.window_results), False
+        try:
+            metadata, rows = library.snapshot(job_id, revision)
+            return library.public(metadata), rows, True
+        except RevisionConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (OSError, ValueError) as exc:
+            raise HTTPException(404, "未找到证据记录，可能已经清理") from exc
+
+    @app.get("/api/evidence/{job_id}")
+    def api_evidence(job_id: str, window_id: str, behavior_id: str = "", revision: str = ""):
+        # Serialize with local deletion/reanalysis. No model or GPU request.
+        with STATE.lock, video_library().lock:
+            metadata, rows, archived = evidence_snapshot(job_id, revision)
+            try:
+                anchor, selected = evidence_rows(rows, window_id, behavior_id, metadata.get("alerts") or [])
+                frames, warnings = evidence_frames(selected)
+            except (OSError, ValueError, TypeError) as exc:
+                raise HTTPException(404, str(exc)) from exc
+            current = metadata.get("analysis_revision", "")
+            from urllib.parse import quote
+            for frame in frames:
+                if archived:
+                    frame["image_url"] = f"/api/videos/{quote(job_id)}/frames/{frame['frame_id']}?revision={quote(current)}"
+                else:
+                    frame["image_url"] = (f"/api/job/{quote(job_id)}/frames/{quote(frame['window_id'])}/{frame['position']}"
+                                          f"?revision={quote(current)}")
+                frame["is_anchor"] = frame["window_id"] == window_id
+            behaviors = {b.id: b.name for b in STATE.behaviors.behaviors}
+            behaviors.update({bid: bid for bid in (anchor.get("violations") or {}) if bid not in behaviors})
+            behaviors.update({'ai_risk:' + r['risk_id']: r.get('name', r['risk_id']) for r in anchor.get('risks') or []})
+            entries = feedback_store().list(job_id)
+            return {"job_id": job_id, "analysis_revision": current, "window_id": window_id,
+                    "filename": metadata.get("filename"), "source_available": bool(metadata.get("source_available")),
+                    "source_url": f"/api/videos/{quote(job_id)}/source" if metadata.get("source_available") else None,
+                    "is_live": bool(metadata.get("is_live")), "use_mock": bool(metadata.get("use_mock")),
+                    "frames": frames, "warnings": warnings, "scene": anchor.get("scene"),
+                    "behaviors": behaviors, "model_results": {**(anchor.get("violations") or {}),
+                        **{'ai_risk:' + r['risk_id']: r for r in anchor.get('risks') or []}},
+                    "feedback": [item for item in entries if item["analysis_revision"] == current and item["window_id"] == window_id]}
+
+    @app.get("/api/feedback/{job_id}")
+    def api_feedback_list(job_id: str):
+        try:
+            return {"job_id": job_id, "feedback": feedback_store().list(job_id),
+                    "note": "人工反馈，保留各分析版本；不会自动改变模型或告警阈值。"}
+        except (OSError, ValueError) as exc:
+            raise HTTPException(400, "反馈记录无法读取") from exc
+
+    @app.post("/api/feedback/{job_id}")
+    def api_feedback_save(job_id: str, body: dict):
+        ensure_current_runtime()
+        revision, window_id = body.get("analysis_revision"), body.get("window_id")
+        if not isinstance(revision, str) or not revision or not isinstance(window_id, str):
+            raise HTTPException(400, "反馈必须关联分析版本和窗口")
+        with STATE.lock, video_library().lock:
+            metadata, rows, _ = evidence_snapshot(job_id, revision)
+            row = next((row for row in rows if row.get("window_id") == window_id), None)
+            if row is None:
+                raise HTTPException(404, "证据窗口已清理")
+            behaviors = {b.id: b.name for b in STATE.behaviors.behaviors}
+            behaviors.update({bid: bid for bid in (row.get("violations") or {}) if bid not in behaviors})
+            behaviors.update({'ai_risk:' + r['risk_id']: r.get('name', r['risk_id']) for r in row.get('risks') or []})
+            try:
+                entry = feedback_store().save(job_id, revision, row, body, behaviors,
+                    use_mock=bool(metadata.get("use_mock")), is_live=bool(metadata.get("is_live")))
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            except OSError as exc:
+                raise HTTPException(507, "反馈未保存，本机文件暂不可写") from exc
+            return {"ok": True, "feedback": entry}
+
     # ── 系统 ──
     @app.get("/api/state")
     def api_state():
+        if isinstance(STATE.session, ServiceSession):
+            STATE.session.poll_health()
         s = STATE.session.status() if STATE.session else {"state": "idle"}
         return {
             "backend": "cluster",
             "runtime": runtime_status(),
             "service": s,
-            "jobs": [j.summary() for j in sorted(STATE.jobs.values(),
+            "jobs": [j.summary() for j in sorted(STATE.jobs.copy().values(),
                                                  key=lambda x: -x.created)],
             "behaviors": {
                 "enabled": [{"id": b.id, "name": b.name, "severity": b.severity}
@@ -1880,6 +2014,7 @@ def create_app():
             # 工具（tools/real_verify.py）要能读到原值并在跑完后还原。
             "live": STATE.cfg.get("live") or {},
             "service_cfg": STATE.cfg.get("service") or {},
+            "upload": {"max_bytes": upload_limit(), "concurrency": 2},
             "cost": service_cost(),
             "auto_released": STATE.auto_released,
             "orphans": STATE.orphans,
@@ -2177,20 +2312,22 @@ def create_app():
     # ── 上传视频 ──
     @app.post("/api/upload")
     async def api_upload(file: UploadFile = File(...)):
-        data = await file.read()
-        if not data:
-            raise HTTPException(400, "空文件")
+        try:
+            ensure_current_runtime()
+        except HTTPException:
+            await file.close()
+            raise
         up_dir = Path(STATE.cfg["paths"]["data_dir"]) / "uploads"
-        up_dir.mkdir(parents=True, exist_ok=True)
-        jid = uuid.uuid4().hex[:12]
-        suffix = Path(file.filename or "video.mp4").suffix or ".mp4"
-        dst = up_dir / f"{jid}{suffix}"
-        dst.write_bytes(data)
-        STATE.uploads[jid] = dst
-        job = JobRecord(job_id=jid, filename=file.filename or dst.name)
-        STATE.jobs[jid] = job
-        STATE.log_line(f"[上传] {job.filename}  {len(data) / 1e6:.1f} MB")
-        return {"ok": True, "job_id": jid, "size_mb": round(len(data) / 1e6, 2)}
+        try:
+            jid, dst, size = await save_upload(file, up_dir, upload_limit())
+        except OSError as exc:
+            raise HTTPException(507, "本机存储不足或无法写入，上传未完成") from exc
+        with STATE.lock:
+            STATE.uploads[jid] = dst
+            job = JobRecord(job_id=jid, filename=file.filename or dst.name, state="uploaded", message="上传完成 · 等待分析")
+            STATE.jobs[jid] = job
+        STATE.log_line(f"[上传] {job.filename}  {size / 1e6:.1f} MB")
+        return {"ok": True, "job_id": jid, "size_mb": round(size / 1e6, 2)}
 
     # ── 启动检测 ──
     @app.post("/api/detect/{job_id}")
@@ -2206,7 +2343,7 @@ def create_app():
         body = body or {}
         ensure_current_runtime()
         with STATE.lock:
-            job = STATE.jobs.get(job_id)
+            job = recover_upload(job_id)
             if not job:
                 raise HTTPException(404, "任务不存在")
             previous_worker = getattr(job, "_detect_worker", None)
@@ -2217,7 +2354,7 @@ def create_app():
                     or (previous_worker is not None and previous_worker.is_alive())):
                 raise HTTPException(400, "该任务已在运行")
             use_mock = bool(body.get("use_mock", job.use_mock))
-            if not use_mock and (not STATE.session or STATE.session.state != "ready"):
+            if not use_mock and not service_is_ready(STATE.session):
                 raise HTTPException(400, "推理服务未就绪。可先点「启动服务」，"
                                          "或勾选「演示模式」在本地跑通链路")
             # Rejected starts must not alter the current backend or loop mode.
@@ -2288,7 +2425,18 @@ def create_app():
 
     @app.get("/api/job/{job_id}")
     def api_job(job_id: str):
-        job = STATE.jobs.get(job_id)
+        with STATE.lock:
+            job = STATE.jobs.get(job_id)
+            if job is None:
+                try:
+                    metadata, rows = video_library().snapshot(job_id)
+                    if metadata.get("state") in ("done", "stopped", "error"):
+                        return {**video_library().public(metadata), "window_results": rows[-200:], "awaiting_analysis": False, "worker_active": False}
+                    job = recover_upload(job_id)
+                    if job:
+                        job.message = "本机没有该任务的运行线程，上传已恢复，可重新开始分析"
+                except (OSError, ValueError):
+                    job = recover_upload(job_id)
         if not job:
             raise HTTPException(404, "任务不存在")
         return {**job.summary(), "window_results": job.window_results}
@@ -2457,7 +2605,7 @@ def create_app():
         # use_mock：没有 VPN / 集群排队时也能验证整条监测链路。
         # 生产用词统一叫「演示模式」，并且必须让用户一眼看出结论是假的。
         use_mock = bool(body.get("use_mock"))
-        if not use_mock and (not STATE.session or STATE.session.state != "ready"):
+        if not use_mock and not service_is_ready(STATE.session):
             raise HTTPException(
                 400,
                 "推理服务未就绪。请先在「服务」页启动；"
@@ -2501,7 +2649,7 @@ def create_app():
 
     # ── 帧图片 ──
     @app.get("/api/job/{job_id}/frames/{window_id}/{idx}")
-    def api_frame(job_id: str, window_id: str, idx: int):
+    def api_frame(job_id: str, window_id: str, idx: int, revision: str = ""):
         """窗口里的第 idx 帧（页面缩略图靠它）。
 
         ★ 帧号优先用**采集时记下的真实帧号**（rec["frame0"]），
@@ -2525,6 +2673,8 @@ def create_app():
         job = STATE.jobs.get(job_id)
         if not job:
             raise HTTPException(404, "任务不存在")
+        if revision and revision != getattr(job, "_analysis_revision", ""):
+            raise HTTPException(409, "分析版本已变化，请重新打开证据")
         rec = next((r for r in job.window_results if r["window_id"] == window_id), None)
         if not rec:
             raise HTTPException(404, "窗口不存在")
@@ -2542,7 +2692,13 @@ def create_app():
             target = next((p for p in files if frame_index_of(p) == wanted), None)
             if target is None:
                 raise HTTPException(404, "该帧已清理或不存在")
-            return FileResponse(str(target), media_type="image/jpeg")
+            try:
+                data = target.read_bytes()
+            except OSError as exc:
+                raise HTTPException(404, "证据帧已清理") from exc
+            if revision and revision != getattr(job, "_analysis_revision", ""):
+                raise HTTPException(409, "分析版本已变化，请重新打开证据")
+            return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
         if base < 0:
             # 回退旧算法：只为兼容"改动前就已经记下的窗口记录"。
             # 新记录都会带 frame0，所以这条路径在正常使用中不会走到。

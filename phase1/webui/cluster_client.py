@@ -427,6 +427,9 @@ class ServiceSession:
         self._lifecycle_lock = threading.RLock()
         self._stop_lock = threading.Lock()
         self._release_pending = False
+        self._health_result = None
+        self._health_checked_at = 0.0
+        self._health_worker = None
 
     @property
     def cancelled(self) -> bool:
@@ -534,6 +537,9 @@ class ServiceSession:
                 self._raise_if_cancelled()
                 info = r.json()
                 if info.get("ready"):
+                    with self._lifecycle_lock:
+                        self._health_result = info
+                        self._health_checked_at = time.monotonic()
                     self._set_start_state("ready")
                     note(f"模型就绪：{info.get('model')} @ {info.get('device')}"
                          f"（加载 {info.get('load_sec')}s）")
@@ -560,7 +566,7 @@ class ServiceSession:
             raise ClusterError("隧道未建立")
         return self.tunnel.base_url()
 
-    def health(self) -> dict:
+    def health(self, timeout: float = 20) -> dict:
         """问服务健康状态。**未就绪不是错误**，要如实返回 ready=false。
 
         ⚠️ 多 worker 场景下，网关在 worker 还没加载完时会返回 503
@@ -570,19 +576,41 @@ class ServiceSession:
         """
         import requests
 
+        with self._lifecycle_lock:
+            tunnel = self.tunnel
         try:
-            r = requests.get(f"{self.base_url()}/health", timeout=20)
+            r = requests.get(f"{self.base_url()}/health", timeout=timeout)
         except requests.exceptions.RequestException as e:
-            return {"ready": False, "state": "unreachable",
-                    "error": f"{type(e).__name__}: {e}"}
-        if r.status_code >= 500:
-            return {"ready": False, "state": "starting",
-                    "error": f"HTTP {r.status_code}: {r.text[:200]}"}
-        try:
-            return r.json()
-        except ValueError:
-            return {"ready": False, "state": "bad-response",
-                    "error": r.text[:200]}
+            info = {"ready": False, "state": "unreachable", "error": f"{type(e).__name__}: {e}"}
+        except ClusterError:
+            info = {"ready": False, "state": "unreachable", "error": "隧道未建立"}
+        else:
+            if r.status_code != 200:
+                info = {"ready": False, "state": "starting", "error": f"HTTP {r.status_code}: {r.text[:200]}"}
+            else:
+                try:
+                    info = r.json()
+                    if not isinstance(info, dict):
+                        raise ValueError("健康检查格式无效")
+                except ValueError:
+                    info = {"ready": False, "state": "bad-response", "error": "健康检查响应格式无效"}
+        with self._lifecycle_lock:
+            if self.tunnel is tunnel and self.state == "ready" and not self.cancelled:
+                self._health_result = info
+                self._health_checked_at = time.monotonic()
+        return info
+
+    def poll_health(self) -> None:
+        """One short background probe per ten seconds, never block UI polling."""
+        with self._lifecycle_lock:
+            if self.state != "ready" or self.cancelled:
+                return
+            if self._health_worker and self._health_worker.is_alive():
+                return
+            if time.monotonic() - self._health_checked_at < 10:
+                return
+            self._health_worker = threading.Thread(target=self.health, kwargs={"timeout": 3}, daemon=True)
+            self._health_worker.start()
 
     def infer(self, frames_b64: list[str], labels: list[str],
               max_new_tokens: int = 512, few_shot: bool = False,
@@ -729,8 +757,12 @@ class ServiceSession:
     def status(self) -> dict:
         with self._lifecycle_lock:
             worker = getattr(self, "_start_worker", None)
+            state, message = self.state, self.message
+            health = self._health_result
+            if state == "ready" and (not self.tunnel or not self.tunnel.alive or (health is not None and health.get("ready") is not True)):
+                state, message = "unreachable", "模型连接异常，正在自动检测恢复；计算节点仍需停止并释放。"
             return {
-                "state": self.state, "message": self.message,
+                "state": state, "message": message,
                 "jobid": self.jobid, "node": self.node, "model": self.model,
                 "local_url": self.base_url() if self.tunnel else None,
                 "uptime_sec": round(time.time() - self.started_at, 1) if self.started_at else None,
