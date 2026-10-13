@@ -96,13 +96,21 @@
       await audio.play();
     }
     notify(job,alerts,{demo=false,live=false}={}){
+      const current=new Set(this.alerts(alerts).map(a=>this.key(job,a,live)));
+      this.queue=this.queue.filter(item=>!(item.job===job&&item.provisional&&!current.has(item.key)));
+      if(this.active?.job===job&&this.active.provisional&&!current.has(this.active.key)){
+        this.sequence++;clearTimeout(this.timer);this.active=null;this.clearAudio();this.synth?.cancel();
+        this.onStatus('预警已撤回，已取消这条语音');
+      }
       for(const a of this.alerts(alerts)){
         const key=this.key(job,a,live);if(this.seen.has(key))continue;this.remember(key);
         if(!this.enabled)continue;
         const name=String(a.behavior_name||a.name||a.behavior_id||'现场风险').slice(0,40);
         const reason=String(a.reason||a.alert_reason||a.observable||'').slice(0,80);
-        const time=Number.isFinite(Number(a.t_start))?`视频${Number(a.t_start).toFixed(1)}秒，`:'';
-        this.queue.push({job,created:this.now(),text:`${demo?'演示告警，模拟结论。':'请注意，'}${live?'':time}检测到${name}。${reason}`});
+        const at=a.source==='workstation'&&Number.isFinite(Number(a.threshold_time_sec))?a.threshold_time_sec:a.t_start;
+        const time=Number.isFinite(Number(at))?`视频${Number(at).toFixed(1)}秒，`:'';
+        const provisional=a.source==='workstation'&&a.review_status==='pending';
+        this.queue.push({job,key,provisional,created:this.now(),text:`${demo?'演示告警，模拟结论。':'请注意，'}${live?'':time}${provisional?'已到设定阈值，'+name+'待AI复核，请核查现场。':'检测到'+name+'。'}${reason}`});
       }
       this.queue=this.queue.slice(-8);this.drain();
     }

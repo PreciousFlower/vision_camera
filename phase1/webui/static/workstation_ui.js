@@ -2,7 +2,7 @@
 class WorkstationUI {
   constructor({api,flash,onChange,onEditorChange,getJob,isBusy}){
     Object.assign(this,{api,flash,onChange,onEditorChange,getJob,isBusy});
-    this.profiles=[];this.available=false;this.scenes={};this.jobs={};this.reports={};this.request=0;this.polling=false;
+    this.profiles=[];this.available=false;this.scenes={};this.jobs={};this.reports={};this.timelineViews={};this.request=0;this.polling=false;
     this.dialog=document.querySelector('#station-setup-dialog');this.canvas=document.querySelector('#station-canvas');this.points=[];this.draft=null;this.image=null;this.readOnly=false;
     this.q=id=>document.getElementById(id);
     for(const kind of ['monitor','file']){
@@ -11,6 +11,8 @@ class WorkstationUI {
       this.q(prefix+'-station-setup').onclick=()=>this.setup(kind);
       this.q(prefix+'-station-export').onclick=()=>this.export(kind);
       this.q(prefix+'-station-locate').onclick=()=>this.setup(kind,true);
+      for(const field of ['mode','subject','kind'])this.q(prefix+'-station-timeline-'+field).onchange=()=>{this.timelineViews[kind]={limit:12};if(this.reports[kind])this.renderTimeline(kind,this.reports[kind]);};
+      this.q(prefix+'-station-timeline-more').onclick=()=>{const view=this.timelineViews[kind]||{limit:12};view.limit+=12;this.timelineViews[kind]=view;if(this.reports[kind])this.renderTimeline(kind,this.reports[kind]);};
     }
     this.q('profile-editor').onchange=()=>onEditorChange();
     this.q('profile-copy').onclick=()=>this.copyProfile();
@@ -59,7 +61,7 @@ class WorkstationUI {
     const active=this.jobs[kind].profile?.mode==='workstation';this.q((kind==='monitor'?'m':'f')+'-station-panel').hidden=!active;
     if(active)this.poll();
   }
-  clear(kind){delete this.jobs[kind];delete this.reports[kind];this.q((kind==='monitor'?'m':'f')+'-station-panel').hidden=true;}
+  clear(kind){delete this.jobs[kind];delete this.reports[kind];delete this.timelineViews[kind];const prefix=kind==='monitor'?'m':'f';this.q(prefix+'-station-panel').hidden=true;for(const field of ['mode','subject','kind'])this.q(prefix+'-station-timeline-'+field).value=field==='mode'?'meaningful':'all';}
   async poll(){
     if(this.polling||document.hidden)return;this.polling=true;
     try{
@@ -71,6 +73,10 @@ class WorkstationUI {
     }finally{this.polling=false;}
   }
   duration(value){const seconds=Math.max(0,Number(value)||0);return seconds>=3600?`${Math.floor(seconds/3600)}时${Math.floor(seconds%3600/60)}分${Math.floor(seconds%60)}秒`:seconds>=60?`${Math.floor(seconds/60)}分${Math.floor(seconds%60)}秒`:`${seconds.toFixed(1)}秒`;}
+  unknownReason(value){
+    const reasons={detection_lost:'人员被遮挡或检测暂时丢失',occlusion:'人员被遮挡',sampling_gap:'采样时间断档',frame_unobservable:'画面无法观察',unobservable:'画面无法观察',initial_confirmation:'首次观测仍在确认',state_confirmation:'状态变化仍在确认',pending_identity:'人员身份待关联',identity_pending:'人员身份待关联'};
+    return value.unknown_reason||reasons[value.unknown_reason_code]||(value.state==='unknown'?'当前画面不足以确认在岗或离岗':'历史上存在无法确认状态的观测区间');
+  }
   qaStatistics(facts){
     if(!facts)return '';
     const names={at_station:'在岗',away:'离岗',unknown:'未知'};
@@ -79,18 +85,47 @@ class WorkstationUI {
   render(kind,report){
     const prefix=kind==='monitor'?'m':'f';this.reports[kind]=report;
     this.q(prefix+'-station-panel').hidden=false;
-    this.q(prefix+'-station-status').textContent=`${report.use_mock?'演示数据 · ':''}${report.model_status||'人员观测与大模型复核'}${report.model_error?' · '+report.model_error:''} · 统计到 ${this.duration(report.time_sec)}`;
+    this.q(prefix+'-station-status').textContent=`${report.use_mock?'演示数据 · ':''}${report.model_status||'人员观测与大模型复核'}${report.model_error?' · '+report.model_error:''} · 统计到 ${this.duration(report.time_sec)} · 离岗 ${report.policy?.away_sec??60} 秒${report.policy?.alarm_mode==='confirmed'?'且模型确认后告警':'即预警，AI后续复核'}`;
     this.q(prefix+'-station-counts').innerHTML=(report.stations||[]).map(s=>`<div class="station-metric"><span>${this.escape(s.name)}</span><strong>${s.observed_count==null?'不可观察':this.escape(s.observed_count)+'<small> 人</small>'}</strong><span>观测驻留 ${this.escape(s.resident_count)} · 预期 ${this.escape(s.expected_people)}${s.ai_check?.visible?` · AI 核对 ${this.escape(s.ai_check.count)}（${Number(s.ai_check.time_sec).toFixed(1)}s）`:''}</span></div>`).join('');
-    const states={at_station:'在岗',away:'离岗',unknown:'未知'},review={confirmed:'模型已确认',uncertain:'模型待复核',pending:'等待模型复核'};
-    this.q(prefix+'-station-people').innerHTML=(report.people||[]).map((p,i)=>`<tr><td><strong>${this.escape(p.name||p.person_id)}</strong><small>${this.escape(p.person_id)}${p.identity_status==='pending'?' · 待关联':''}</small></td><td><span class="station-state ${p.state==='away'?'away':p.state==='at_station'?'present':'unknown'}">${states[p.state]||'未知'}</span><small>${this.escape(review[p.review_status]||'待复核')}</small></td><td>${this.duration(p.current_duration_sec)}</td><td>${this.duration(p.at_station_sec)}</td><td>${this.duration(p.away_sec)}</td><td>${this.duration(p.unknown_sec)}</td><td>${this.escape(p.away_count)}</td><td>${this.duration(p.longest_away_sec)}</td><td><button class="btn ghost sm" data-person="${i}">关联 / 命名</button></td></tr>`).join('')||'<tr><td colspan="9" class="muted">尚未观测到可跟踪人员，不会推断某位员工已离岗。</td></tr>';
+    const states={at_station:'在岗',away:'离岗',unknown:'未知'},review={confirmed:'模型已确认',rejected:'模型未确认',uncertain:'模型待复核',pending:'等待模型复核'};
+    this.q(prefix+'-station-people').innerHTML=(report.people||[]).map((p,i)=>`<tr><td><strong>${this.escape(p.name||p.person_id)}</strong><small>${this.escape(p.person_id)}${p.identity_status==='pending'?' · 待关联':''}</small></td><td><span class="station-state ${p.state==='away'?'away':p.state==='at_station'?'present':'unknown'}">${states[p.state]||'未知'}</span><small>${this.escape(review[p.review_status]||'待复核')}</small></td><td>${this.duration(p.current_duration_sec)}</td><td>${this.duration(p.at_station_sec)}</td><td>${this.duration(p.away_sec)}</td><td title="${this.escape(this.unknownReason(p))}">${this.duration(p.unknown_sec)}${Number(p.unknown_sec)>0?`<small class="station-unknown-reason">${this.escape(this.unknownReason(p))}</small>`:''}</td><td>${this.escape(p.away_count)}</td><td>${this.duration(p.longest_away_sec)}</td><td><button class="btn ghost sm" data-person="${i}">关联 / 命名</button></td></tr>`).join('')||'<tr><td colspan="9" class="muted">尚未观测到可跟踪人员，不会推断某位员工已离岗。</td></tr>';
     this.q(prefix+'-station-people').querySelectorAll('[data-person]').forEach(button=>button.onclick=()=>this.editPerson(kind,report.people[Number(button.dataset.person)]));
-    const timeline=[...(report.timeline||[]),...(report.station_timeline||[]).map(s=>({...s,regional:true,start:s.since}))].sort((a,b)=>b.start-a.start).slice(0,80);
+    this.renderTimeline(kind,report);
+  }
+  renderTimeline(kind,report){
+    const prefix=kind==='monitor'?'m':'f',states={at_station:'在岗',away:'离岗',unknown:'未知'};
+    const subject=this.q(prefix+'-station-timeline-subject'),selected=subject.value||'all';
+    const options=[new Option('所有人员 / 工位','all'),...(report.people||[]).map(p=>new Option(p.name||p.person_id,'person:'+p.person_id)),...(report.stations||[]).map(s=>new Option(s.name,'station:'+s.id))];
+    subject.replaceChildren(...options);subject.value=options.some(option=>option.value===selected)?selected:'all';
+    const mode=this.q(prefix+'-station-timeline-mode').value,filter=this.q(prefix+'-station-timeline-kind').value;
+    const all=[...(report.timeline||[]),...(report.station_timeline||[]).map(s=>({...s,regional:true,start:s.since}))].filter(span=>Number.isFinite(Number(span.start))&&Number(span.end??report.time_sec)-Number(span.start)>=0.05);
+    const meaningful=all.filter(span=>span.regional?span.category!=='normal':span.state!=='unknown');
+    let timeline=(mode==='all'?all:meaningful).filter(span=>{
+      const target=subject.value;
+      if(target.startsWith('person:')&&(span.regional||span.person_id!==target.slice(7)))return false;
+      if(target.startsWith('station:')&&span.station_id!==target.slice(8))return false;
+      return filter==='all'||(span.regional?span.category:span.state)===filter;
+    }).sort((a,b)=>a.start-b.start);
+    if(mode!=='all'){
+      const merged=[];
+      for(const span of timeline){
+        const previous=merged.findLast(item=>item.regional===span.regional&&item.person_id===span.person_id&&item.station_id===span.station_id);
+        const same=previous&&previous.state===span.state&&previous.category===span.category&&previous.count===span.count&&previous.end!=null&&Math.abs(previous.end-span.start)<0.05;
+        if(same){previous.end=span.end;previous.parts+=1;}else merged.push({...span,parts:1});
+      }
+      timeline=merged;
+    }
+    timeline.sort((a,b)=>b.start-a.start);
+    const view=this.timelineViews[kind]||{limit:12};this.timelineViews[kind]=view;
+    const total=timeline.length;timeline=timeline.slice(0,view.limit);
+    this.q(prefix+'-station-timeline-summary').textContent=`${mode==='all'?'全部有效记录':'状态变化与工位异常'} · 显示 ${timeline.length} / ${total} 段${mode==='all'?'':'，未知和人数正常记录可切换查看'}`;
+    this.q(prefix+'-station-timeline-more').hidden=total<=view.limit;
     this.q(prefix+'-station-timeline').innerHTML=timeline.map((span,i)=>{
-      const station=report.stations.find(s=>s.id===span.station_id),label=span.regional?`${station?.name||span.station_id} · ${({empty:'人数不足',over:'人数超限',normal:'人数正常'})[span.category]} ${span.count}人`:`${span.person_id} · ${states[span.state]||'未知'}`;
+      const station=report.stations.find(s=>s.id===span.station_id),person=report.people?.find(p=>p.person_id===span.person_id),label=span.regional?`${station?.name||span.station_id} · ${({empty:'人数不足',over:'人数超限',normal:'人数正常'})[span.category]} ${span.count}人`:`${person?.name||span.person_id} · ${states[span.state]||'未知'}`;
       const css=span.regional?(span.category==='normal'?'at_station':'away'):span.state;
-      return `<button class="station-span ${css}" data-span="${i}"><strong>${this.escape(label)}</strong><span>${Number(span.start).toFixed(1)}s — ${span.end==null?'进行中':Number(span.end).toFixed(1)+'s'}</span><span>${this.duration((span.end??report.time_sec)-span.start)} · 查看证据</span></button>`;
-    }).join('')||'<span class="muted">时间段将在人员进入、离开或观察中断后显示。</span>';
-    this.q(prefix+'-station-timeline').querySelectorAll('[data-span]').forEach(button=>button.onclick=()=>{const span=timeline[Number(button.dataset.span)],bid=span.regional?(span.category==='empty'?'station_empty':'station_over_capacity'):'station_away';openEvidence(this.jobs[kind].id,(span.regional?'station_interval_':'interval_')+span.interval_id,bid,report.analysis_revision);});
+      return `<button class="station-span ${css}" data-span="${i}"><strong>${this.escape(label)}</strong><span>${Number(span.start).toFixed(1)}s — ${span.end==null?'进行中':Number(span.end).toFixed(1)+'s'}</span><span>${this.duration((span.end??report.time_sec)-span.start)} · 查看证据</span>${span.state==='unknown'?`<span class="muted">${this.escape(this.unknownReason(span))}</span>`:''}${span.parts>1?`<span class="muted">合并 ${span.parts} 段 · 全部记录可逐段查看</span>`:''}</button>`;
+    }).join('')||'<span class="muted">当前筛选下暂无有效时间段。</span>';
+    this.q(prefix+'-station-timeline').querySelectorAll('[data-span]').forEach(button=>button.onclick=()=>{const span=timeline[Number(button.dataset.span)],bid=span.regional?(span.category==='empty'?'station_empty':span.category==='over'?'station_over_capacity':''):span.state==='away'?'station_away':'';openEvidence(this.jobs[kind].id,(span.regional?'station_interval_':'interval_')+span.interval_id,bid,report.analysis_revision);});
   }
   async setup(kind,readOnly=false){
     const scope=this.scope(kind);

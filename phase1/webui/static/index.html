@@ -304,8 +304,12 @@ section.active { display: block; animation: fade .2s ease; }
 .station-state.present { background:#eaf7ef; color:var(--ok); }
 .station-state.away { background:#fff0ef; color:var(--err); }
 .station-state.unknown { background:#f0f0f0; color:var(--dim); }
-.station-timeline { display:flex; gap:9px; overflow:auto; padding:12px 2px; }
-.station-span { flex:0 0 180px; background:#f5f5f5; border:1px solid var(--line); border-radius:5px; padding:10px; text-align:left; font-size:11px; color:var(--fg2); cursor:pointer; }
+.station-timeline-controls { display:flex; flex-wrap:wrap; align-items:center; gap:9px; margin-top:16px; }
+.station-timeline-controls select { width:auto; max-width:100%; min-width:130px; }
+.station-timeline { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:9px; padding:12px 2px; }
+.station-span { min-width:0; background:#f5f5f5; border:1px solid var(--line); border-radius:5px; padding:10px; text-align:left; font-size:11px; color:var(--fg2); cursor:pointer; }
+.station-span strong,.station-span span { overflow-wrap:anywhere; }
+.station-unknown-reason { white-space:normal; max-width:180px; margin-top:4px; }
 .station-span span { display:block; margin-top:4px; }
 .station-span.at_station { border-left:3px solid var(--ok); }
 .station-span.away { border-left:3px solid var(--err); }
@@ -526,7 +530,9 @@ section.active { display: block; animation: fade .2s ease; }
     <div class="card-head"><h3>工位人员统计</h3><div class="row"><button id="m-station-locate" class="btn ghost sm">查看人员位置</button><button id="m-station-export" class="btn ghost sm">导出统计</button></div></div>
     <p id="m-station-status" class="muted" role="status">等待人员观测</p><div id="m-station-counts" class="station-counts"></div>
     <div class="station-table-wrap"><table class="station-table"><thead><tr><th>人员</th><th>状态</th><th>本次持续</th><th>累计在岗</th><th>累计离岗</th><th>未知时长</th><th>离岗次数</th><th>最长离岗</th><th>人工关联</th></tr></thead><tbody id="m-station-people"></tbody></table></div>
-    <div id="m-station-timeline" class="station-timeline"></div><p class="muted">在岗指位于关联工位区域；未知区间不算离岗。工位统计在页面后台继续，结束时请停止监测并释放节点。</p>
+    <div class="station-timeline-controls"><strong>事件时间轴</strong><select id="m-station-timeline-mode" aria-label="监测时间轴记录范围"><option value="meaningful">状态变化与工位异常</option><option value="all">全部记录（含未知）</option></select><select id="m-station-timeline-subject" aria-label="监测时间轴人员或工位"><option value="all">所有人员 / 工位</option></select><select id="m-station-timeline-kind" aria-label="监测时间轴状态"><option value="all">所有状态</option><option value="at_station">在岗</option><option value="away">离岗</option><option value="unknown">未知</option><option value="empty">人数不足</option><option value="over">人数超限</option><option value="normal">人数正常</option></select></div>
+    <p id="m-station-timeline-summary" class="muted"></p><div id="m-station-timeline" class="station-timeline"></div><button id="m-station-timeline-more" class="btn ghost sm" hidden>显示更多记录</button>
+    <details class="note"><summary>未知时长是什么？</summary><p>未知是画面证据不足以判断人员在岗或离岗的累计时间，例如遮挡、人员检测丢失、采样断档、状态确认或身份待关联，不等于等待模型。未知区间单独计时，不算离岗；切换“全部记录”可查看原因和证据。</p></details><p class="muted">在岗指位于关联工位区域。工位统计在页面后台继续，结束时请停止监测并释放节点。</p>
   </div>
   <div class="grid g-2-1">
     <div>
@@ -687,7 +693,9 @@ section.active { display: block; animation: fade .2s ease; }
       <div class="card-head"><h3>工位人员统计</h3><div class="row"><button id="f-station-locate" class="btn ghost sm">查看人员位置</button><button id="f-station-export" class="btn ghost sm">导出统计</button></div></div>
       <p id="f-station-status" class="muted" role="status">等待人员观测</p><div id="f-station-counts" class="station-counts"></div>
       <div class="station-table-wrap"><table class="station-table"><thead><tr><th>人员</th><th>状态</th><th>本次持续</th><th>累计在岗</th><th>累计离岗</th><th>未知时长</th><th>离岗次数</th><th>最长离岗</th><th>人工关联</th></tr></thead><tbody id="f-station-people"></tbody></table></div>
-      <div id="f-station-timeline" class="station-timeline"></div><p class="muted">时间按视频时间计算，不能推断视频开始前的在岗时长。身份不确定可人工关联。</p>
+      <div class="station-timeline-controls"><strong>事件时间轴</strong><select id="f-station-timeline-mode" aria-label="视频时间轴记录范围"><option value="meaningful">状态变化与工位异常</option><option value="all">全部记录（含未知）</option></select><select id="f-station-timeline-subject" aria-label="视频时间轴人员或工位"><option value="all">所有人员 / 工位</option></select><select id="f-station-timeline-kind" aria-label="视频时间轴状态"><option value="all">所有状态</option><option value="at_station">在岗</option><option value="away">离岗</option><option value="unknown">未知</option><option value="empty">人数不足</option><option value="over">人数超限</option><option value="normal">人数正常</option></select></div>
+      <p id="f-station-timeline-summary" class="muted"></p><div id="f-station-timeline" class="station-timeline"></div><button id="f-station-timeline-more" class="btn ghost sm" hidden>显示更多记录</button>
+      <details class="note"><summary>未知时长是什么？</summary><p>未知是画面证据不足以判断人员在岗或离岗的累计时间，例如遮挡、人员检测丢失、采样断档、状态确认或身份待关联，不等于等待模型。未知区间单独计时，不算离岗；切换“全部记录”可查看原因和证据。</p></details><p class="muted">时间按视频时间计算，不能推断视频开始前的在岗时长。身份不确定可人工关联。</p>
     </div>
     <h3>逐窗口详情 <span class="hint">模型看到的画面 + 它的原始描述</span></h3>
     <div id="windows"><span class="muted">暂无数据</span></div>
@@ -862,6 +870,7 @@ function speechHello(jid,alerts,mon){if(newSpeechRuns.delete(jid))speakAlerts(ji
 function esc(value){
   return String(value ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+function timeText(value){return value!==null&&value!==undefined&&Number.isFinite(Number(value))?Number(value).toFixed(1):'—';}
 function confidenceText(value){
   const n = Number(value);
   return Number.isFinite(n) ? Math.round(Math.max(0, Math.min(1,n))*100)+'%' : '—';
@@ -1381,7 +1390,7 @@ function updateLiveMetrics(metrics={}){
 function renderWindowCard(d, jid){
   $('#m-bar').style.width = Math.min(100, Math.round((d.progress||0)*100)) + '%';
   const n = d.cumulative || d.index;
-  if(monitorRunning) $('#m-msg').textContent = `监测中 · 第 ${n} 个窗口 · ${d.t_start}s–${d.t_end}s`
+  if(monitorRunning) $('#m-msg').textContent = `监测中 · 第 ${n} 个窗口 · ${timeText(d.t_start)}s–${timeText(d.t_end)}s`
     + (d.latency ? ` · 本批 ${d.batch||1} 条` : '');
   $('#mm-win').textContent = n;
   if(d.live_metrics)updateLiveMetrics({...d.live_metrics,result_age_sec:d.result_age_sec});
@@ -1510,16 +1519,19 @@ function windowCard(d,jid){
   const div=document.createElement('article');
   div.className='act'+(hits.length||risks.some(r=>r.alert===true&&!(Array.isArray(r.evidence_issues)&&r.evidence_issues.length))?' hit':'');
   div.dataset.windowId=d.window_id||'';
+  div.dataset.inferenceFailed=d.error?'true':'false';
   const latency=Number(d.latency);
   const sampling=d.sampling||{};
   const samplingTags=(Number(sampling.retained_action_frames)>0?`<span class="tag sampling-tag">补充 ${esc(sampling.retained_action_frames)} 张动作关键帧</span>`:'')+(Number(sampling.gap_sec)>0?`<span class="tag sampling-gap" title="保留关键帧不代表已完整查看这段时间">采样空档 ${Number(sampling.gap_sec).toFixed(1)} 秒</span>`:'');
-  div.innerHTML=`<div class="top"><span class="t">#${esc(d.cumulative||d.index||'—')}</span><span>${esc(d.t_start)}s – ${esc(d.t_end)}s</span>${d.skipped?'<span class="tag rule-source">画面静止 · 未调用模型</span>':(latency>0?`<span>${latency.toFixed(1)}s</span>`:'')}${d.tokens_out?`<span>${esc(d.tokens_out)} tok</span>`:''}${samplingTags}${hits.map(x=>`<span class="tag behavior-hit">${esc(x.name)} · 行为命中 ${confidenceText(x.confidence)}</span>`).join('')}${d.error?`<span style="color:var(--err)">${esc(d.error)}</span>`:''}</div>
-    <div class="row" style="align-items:flex-start;gap:13px;flex-wrap:nowrap"><img class="thumb" src="${esc(frameThumbUrl(jid,d))}" loading="lazy" alt="${esc(d.t_start)}至${esc(d.t_end)}秒窗口判定画面" tabindex="0" role="button" title="本窗口中间帧，点击或按回车放大"><div style="flex:1;min-width:0">${evidenceReviewNotice(warnings)}${warnings.length?'<div class="raw-description-label">以下为 AI 原始描述，待复核</div>':''}<div class="scene-desc">${esc(sceneText)}</div>${people.map((p,i)=>`<div class="person"><span class="pin">${i+1}</span><div class="body"><div class="where">${esc(p.where)}${p.appearance?' · '+esc(p.appearance):''}</div><div class="doing">${esc(p.action)}</div>${p.changed&&!['无','无明显变化'].includes(p.changed)?`<div class="chg">动作变化：${esc(p.changed)}</div>`:''}</div></div>`).join('')}${!people.length?`<div class="muted" style="font-size:11px">${d.error?'等待后续窗口的有效判断。':d.skipped?'本窗口未进行新的 AI 判断；静止画面会定期复检。':'画面中未识别到人物'}</div>`:''}${hits.map(x=>x.observable?`<div class="risk-detail behavior-hit"><strong>${esc(x.name)} · 配置行为</strong><div class="risk-evidence">模型描述的证据：${esc(x.observable)}</div>${x.alert_reason?`<div class="risk-evidence">判断理由：${esc(x.alert_reason)}</div>`:''}</div>`:'').join('')}${riskDetails(risks)}</div></div>`;
+  div.innerHTML=`<div class="top"><span class="t">#${esc(d.cumulative||d.index||'—')}</span><span>${timeText(d.t_start)}s – ${timeText(d.t_end)}s</span>${d.skipped?'<span class="tag rule-source">画面静止 · 未调用模型</span>':(latency>0?`<span>${latency.toFixed(1)}s</span>`:'')}${d.tokens_out?`<span>${esc(d.tokens_out)} tok</span>`:''}${samplingTags}${hits.map(x=>`<span class="tag behavior-hit">${esc(x.name)} · 行为命中 ${confidenceText(x.confidence)}</span>`).join('')}${d.error?`<span style="color:var(--err)">${esc(d.error)}</span>`:''}</div>
+    <div class="row" style="align-items:flex-start;gap:13px;flex-wrap:nowrap"><img class="thumb" src="${esc(frameThumbUrl(jid,d))}" loading="lazy" alt="${timeText(d.t_start)}至${timeText(d.t_end)}秒窗口判定画面" tabindex="0" role="button" title="本窗口中间帧，点击或按回车放大"><div style="flex:1;min-width:0">${evidenceReviewNotice(warnings)}${warnings.length?'<div class="raw-description-label">以下为 AI 原始描述，待复核</div>':''}<div class="scene-desc">${esc(sceneText)}</div>${people.map((p,i)=>`<div class="person"><span class="pin">${i+1}</span><div class="body"><div class="where">${esc(p.where)}${p.appearance?' · '+esc(p.appearance):''}</div><div class="doing">${esc(p.action)}</div>${p.changed&&!['无','无明显变化'].includes(p.changed)?`<div class="chg">动作变化：${esc(p.changed)}</div>`:''}</div></div>`).join('')}${!people.length?`<div class="muted" style="font-size:11px">${d.error?'等待后续窗口的有效判断。':d.skipped?'本窗口未进行新的 AI 判断；静止画面会定期复检。':'画面中未识别到人物'}</div>`:''}${hits.map(x=>x.observable?`<div class="risk-detail behavior-hit"><strong>${esc(x.name)} · 配置行为</strong><div class="risk-evidence">模型描述的证据：${esc(x.observable)}</div>${x.alert_reason?`<div class="risk-evidence">判断理由：${esc(x.alert_reason)}</div>`:''}</div>`:'').join('')}${riskDetails(risks)}</div></div>`;
   div.querySelector('.thumb').onclick=e=>openImageViewer(e.currentTarget);
   if(d.station_review){
     const review=document.createElement('details');review.style.cssText='margin-top:10px;font-size:12px';
     review.innerHTML=`<summary>查看大模型工位复核详情</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(JSON.stringify(d.station_review,null,2))}</pre>`;
     div.append(review);
+    if(d.protocol_warnings?.length){const warning=document.createElement('div');warning.className='note warn';warning.textContent='部分模型条目未作为证据：'+d.protocol_warnings.join('；');div.append(warning);}
+    if(d.raw){const original=document.createElement('details');original.innerHTML=`<summary>查看模型原始输出与引用校验</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(d.raw)}${d.station_diagnostic?.problems?.length?'\n\n'+esc(d.station_diagnostic.problems.join('；')):''}</pre>`;div.append(original);}
   }
   if(d.verification){
     const notice=document.createElement('details');
@@ -1651,7 +1663,7 @@ function streamJob(jid){
 }
 function addWindow(d,jid){
   $('#job-bar').style.width=Math.round((d.progress||0)*100)+'%';
-  $('#job-msg').textContent=`分析中 ${d.index||'—'}/${d.total||'—'} · ${d.t_start}s–${d.t_end}s`+(d.latency?` · ${Number(d.latency).toFixed(1)}s`:'');
+  $('#job-msg').textContent=`分析中 ${d.index||'—'}/${d.total||'—'} · ${timeText(d.t_start)}s–${timeText(d.t_end)}s`+(d.latency?` · ${Number(d.latency).toFixed(1)}s`:'');
   $('#windows').querySelectorAll('.empty-state').forEach(el=>el.remove());
   $('#windows').prepend(windowCard(d,jid));
   while($('#windows').children.length>200)$('#windows').lastChild.remove();
@@ -1757,6 +1769,15 @@ function renderAlerts(alerts,mon){
   if(mon)$('#mm-alerts').textContent=alertStore.monitor.length;
   paintAlerts(mon);
 }
+function alertEvidenceAnchor(alert){
+  const ids=Array.isArray(alert.window_ids)?alert.window_ids:[];
+  if(alert.source==='workstation'){
+    const explicit=ids.find(id=>/^(?:station_)?interval_/.test(String(id)));
+    if(explicit)return explicit;
+    if(alert.interval_id)return (alert.behavior_id==='station_away'?'interval_':'station_interval_')+alert.interval_id;
+  }
+  return ids[0]||'';
+}
 function paintAlerts(mon){
   markAlertWindows(mon);
   const box=mon?'#m-alerts':'#alerts',prefix=mon?'m':'f';
@@ -1771,21 +1792,27 @@ function paintAlerts(mon){
   $(box).innerHTML=ordered.map((a,i)=>{
     const source=alertSource(a),severity=severityLabels[a.severity]?a.severity:'medium';
     const evidenceTime=typeof a.evidence_time_sec==='number'&&Number.isFinite(a.evidence_time_sec)&&a.evidence_time_sec>=0?`<div class="ev">证据时刻 ${a.evidence_time_sec.toFixed(2)}秒</div>`:'';
-    const basis=a.source==='workstation'?`工作时段累计 ${Number(a.active_duration_sec??a.duration_sec).toFixed(1)}秒 · 大模型已复核`:`置信度 ${confidenceText(a.max_confidence??a.confidence)}`;
-    return `<article class="alert ${severity}"><div class="t">${esc(a.behavior_name||'现场风险')}<span class="tag sev-${severity}">${severityLabels[severity]}</span><span class="tag ${source==='ai_risk'?'risk-source':'rule-source'}">${source==='ai_risk'?'AI 风险':'配置行为'}</span></div><div class="meta">查看范围 ${esc(a.t_start)}s – ${esc(a.t_end)}s · ${a.hits!=null&&a.span!=null?`命中 ${esc(a.hits)}/${esc(a.span)} · `:''}${basis}${a.person_desc?' · '+esc(a.person_desc):''}</div>${evidenceTime}${a.reason?`<div class="reason"><b>判断理由</b> · ${esc(a.reason)}</div>`:''}${(Array.isArray(a.evidences)?a.evidences:[]).map(e=>`<div class="ev">可见证据 · ${esc(e)}</div>`).join('')}</article>`;
+    const pending=a.review_status==='pending'||a.provisional===true;
+    const basis=a.source==='workstation'?`工作时段累计 ${timeText(a.active_duration_sec??a.duration_sec)}秒 · ${pending?'已到设定阈值 · 待 AI 复核':'大模型已确认'}`:`置信度 ${confidenceText(a.max_confidence??a.confidence)}`;
+    const threshold=a.source==='workstation'&&Number.isFinite(a.threshold_time_sec)?`<div class="ev">阈值时刻 ${timeText(a.threshold_time_sec)}秒${Number.isFinite(a.trigger_time_sec)?` · 触发时刻 ${timeText(a.trigger_time_sec)}秒`:''}${!pending&&Number(a.verification_delay_sec)>0?` · 模型复核用时 ${timeText(a.verification_delay_sec)}秒`:''}</div>`:'';
+    return `<article class="alert ${severity}"><div class="t">${esc(a.behavior_name||'现场风险')}<span class="tag sev-${severity}">${severityLabels[severity]}</span><span class="tag ${source==='ai_risk'?'risk-source':'rule-source'}">${source==='ai_risk'?'AI 风险':a.source==='workstation'?'工位规则':'配置行为'}</span>${a.source==='workstation'?`<span class="tag ${pending?'risk-source':'rule-source'}">${pending?'待 AI 复核':'AI 已确认'}</span>`:''}</div><div class="meta">查看范围 ${timeText(a.t_start)}s – ${timeText(a.t_end)}s · ${a.hits!=null&&a.span!=null?`命中 ${esc(a.hits)}/${esc(a.span)} · `:''}${basis}${a.person_desc?' · '+esc(a.person_desc):''}</div>${threshold}${evidenceTime}${a.reason?`<div class="reason"><b>判断理由</b> · ${esc(a.reason)}</div>`:''}${(Array.isArray(a.evidences)?a.evidences:[]).map(e=>`<div class="ev">可见证据 · ${esc(e)}</div>`).join('')}</article>`;
   }).join('');
   $(box).querySelectorAll('article.alert').forEach((card,i)=>{
     const a=ordered[i],button=document.createElement('button');button.className='btn ghost sm';button.style.marginTop='10px';button.textContent='查看前后证据 / 复核';
-    button.disabled=!a.window_ids?.length;button.onclick=()=>openEvidence(mon?monJob:currentJob,a.window_ids[0],a.behavior_id||'');card.append(button);
+    const anchor=alertEvidenceAnchor(a);button.disabled=!anchor;button.onclick=()=>openEvidence(mon?monJob:currentJob,anchor,a.behavior_id||'');card.append(button);
   });
 }
 function markAlertWindows(mon){
-  const ids=new Set(alertStore[mon?'monitor':'file'].flatMap(a=>Array.isArray(a.window_ids)?a.window_ids:[]));
+  const alerts=alertStore[mon?'monitor':'file'];
+  const ids=new Set(alerts.flatMap(a=>Array.isArray(a.window_ids)?a.window_ids:[]));
   $(mon?'#m-feed':'#windows').querySelectorAll('.act').forEach(card=>{
-    const alerted=ids.has(card.dataset.windowId);card.classList.toggle('alerted',alerted);
+    const alerted=card.dataset.inferenceFailed!=='true'&&ids.has(card.dataset.windowId);card.classList.toggle('alerted',alerted);
     let badge=card.querySelector('.alert-badge');
-    if(alerted&&!badge){badge=document.createElement('span');badge.className='tag alert-badge';badge.textContent='已告警';card.querySelector('.top').append(badge);}
-    else if(!alerted&&badge)badge.remove();
+    if(alerted){
+      if(!badge){badge=document.createElement('span');badge.className='tag alert-badge';card.querySelector('.top').append(badge);}
+      const linked=alerts.filter(a=>Array.isArray(a.window_ids)&&a.window_ids.includes(card.dataset.windowId));
+      badge.textContent=linked.every(a=>a.review_status==='pending'||a.provisional===true)?'阈值预警 · 待 AI 复核':'已告警';
+    }else if(badge)badge.remove();
   });
 }
 function exportAlerts(mon){
@@ -1847,7 +1874,7 @@ function loadFeedbackSelection(){
   $('#feedback-save').disabled=feedbackSaving||runtimeOutdated||!evidenceContext||!id||!feedbackLabel;
   const labelNames={correct:'正确',false_positive:'误报',missed:'漏报'};
   const result=evidenceContext?.model_results?.[id];
-  $('#feedback-summary').textContent=(previous?`已保存人工标签：${labelNames[previous.label]}${previous.note?' · '+previous.note:''}\n`:'')+(result?`${result.origin==='station_statistics'?'统计状态与模型复核':'大模型原始判断'}：${result.violation===true||result.alert===true?'行为命中':'未确认行为'} · ${result.observable||result.alert_reason||'无补充描述'}`:'该窗口没有此行为的模型判断，可标记漏报。');
+  $('#feedback-summary').textContent=(previous?`已保存人工标签：${labelNames[previous.label]}${previous.note?' · '+previous.note:''}\n`:'')+(result?`${result.origin==='station_statistics'?'统计状态与模型复核':'大模型原始判断'}：${result.provisional?'已到阈值，AI待复核':result.violation===true||result.alert===true?'行为命中':'未确认行为'} · ${result.observable||result.alert_reason||'无补充描述'}`:'该窗口没有此行为的模型判断，可标记漏报。');
 }
 $('#feedback-behavior').onchange=loadFeedbackSelection;
 $('#feedback-labels').querySelectorAll('button').forEach(button=>button.onclick=()=>{

@@ -55,7 +55,7 @@ class RuntimeFreshnessTests(unittest.TestCase):
         job = S.JobRecord('file', 'clip.mp4')
         with patch.object(S.STATE, 'jobs', {'file': job}), \
                 patch.object(S, 'run_job') as runner, TestClient(S.create_app()) as client:
-            response = client.post('/api/detect/file', json={'use_mock': True})
+            response = client.post('/api/detect/file', json={'use_mock': True,'profile_id':'current'})
             self.assertEqual(response.status_code, 200)
             self.assertTrue(job.with_actions)
 

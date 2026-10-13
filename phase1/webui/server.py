@@ -2048,7 +2048,7 @@ def create_app():
                 # Expose the same presentation fields as a live window, no paths.
                 record = {key: row.get(key) for key in (
                     "window_id", "t_start", "t_end", "frames", "frame_indices", "frame_labels", "frame_times",
-                    "scene", "people", "risks", "evidence_warnings", "verification", "station_review", "error",
+                    "scene", "people", "risks", "evidence_warnings", "verification", "station_review", "station_diagnostic", "protocol_warnings", "raw", "error",
                     "latency", "tokens_out", "sampling", "skipped")}
                 record["index"] = index
                 record["frames"] = row.get("frames") or len(row.get("frame_indices") or [])
@@ -2205,9 +2205,11 @@ def create_app():
                 if not refs: continue
                 duration=max(0,(item['end'] if item['end'] is not None else report['time_sec'])-start)
                 bid=('station_empty' if state=='empty' else 'station_over_capacity') if regional else 'station_away'
-                violation={'violation':any(a.get('interval_id')==item['interval_id'] and a['behavior_id']==bid for a in report.get('alerts',[])),
+                alarm=next((a for a in report.get('alerts',[]) if a.get('interval_id')==item['interval_id'] and a['behavior_id']==bid),None)
+                review_status=(alarm or {}).get('review_status') or item.get('review_status','pending')
+                violation={'violation':alarm is not None,'provisional':bool(alarm and review_status=='pending'),
                            'confidence':None,'observable':check.get('reason') if regional else item.get('model_reason') or '人员几何观测，等待模型复核',
-                           'origin':'station_statistics','review_status':item.get('review_status','pending')}
+                           'origin':'station_statistics','review_status':review_status}
                 rows.append({'window_id':prefix+item['interval_id'],'t_start':start,'t_end':item['end'] if item['end'] is not None else report['time_sec'],
                              'frame_indices':[int(fid[2:]) for fid,_ in refs],'frame_labels':[f't={t:.6f}s' for _,t in refs],
                              'frame_times':[t for _,t in refs],'scene':f"{item[owner]} · {state} · 已观测 {duration:.1f} 秒",

@@ -124,6 +124,16 @@ def run_station_job(job, source, cfg, session, library, store, log):
     def publish():
         job._station_model_status=model_status;job._station_model_error=last_error
         job.events.put({'type':'station','data':{**ledger.snapshot(),'analysis_revision':job._analysis_revision,'model_status':model_status,'model_error':last_error,'use_mock':job.use_mock,'profile':job.profile,'scene':job.station_scene,'progress':job.progress}})
+    def publish_alarms(review_window_id=None):
+        updates=ledger.alarms()
+        if not updates:return
+        for alert in updates:
+            anchor=('interval_' if alert.get('person_id') else 'station_interval_')+alert['interval_id']
+            alert['window_ids']=[anchor]+([review_window_id] if review_window_id and alert.get('review_status')=='confirmed' else [])
+        job.alerts=copy.deepcopy([a for a in ledger.alerts if a.get('review_status')!='rejected'][-500:])
+        if previous is not None:save_frame(previous)
+        job.events.put({'type':'alerts','alerts':job.alerts,'alarm_updates':copy.deepcopy(updates)})
+        log(f'[{job.job_id[:8]}] 工位告警状态更新 {len(updates)} 条（阈值检查独立于模型请求）')
     def review_call(payload):
         if job.use_mock:
             latest=payload['samples'][-1];tracks=latest['tracks'];check=[]
@@ -184,10 +194,13 @@ def run_station_job(job, source, cfg, session, library, store, log):
             ledger.review(parsed,selected['evidence']);last_review_time=selected['evidence'][-1]['time_sec']
             model_status='演示核验（模拟结论）' if job.use_mock else '已由部署的大模型核验'
             last_error=''
+            diagnostic=result.get('station_diagnostic') or {}
+            protocol_warnings=result.get('protocol_warnings') or parsed.get('validation_warnings') or []
             scene=parsed['scene']
         except Exception as exc:
             parsed={'observations':[],'stations':[]};scene='本次工位复核失败，统计保留；未经模型确认不发告警'
             last_error=f'{type(exc).__name__}: {exc}';model_status='大模型核验暂不可用，待复核'
+            diagnostic=getattr(exc,'station_diagnostic',{}) or {};protocol_warnings=[]
             log(f'[{job.job_id[:8]}] 工位复核失败：{last_error}')
         finally: future=None;package=None
         samples=selected['samples'];wid=f'{job.job_id}__w{job.windows_seen:05d}'
@@ -198,18 +211,14 @@ def run_station_job(job, source, cfg, session, library, store, log):
              'frames':len(samples),'frame0':samples[0]['index'],'frame_indices':[s['index'] for s in samples],
              'frame_labels':[f"t={s['timestamp']:.3f}s" for s in samples],'frame_times':[s['timestamp'] for s in samples],
              'scene':scene,'people':[{'where':o.get('station_id') or '工位外','appearance':o['person_id'],'action':o['state'],'changed':o['reason']} for o in latest_people.values()],
-             'station_review':parsed,'violations':{},'risks':[],'latency':time.perf_counter()-selected['started'],
+             'station_review':parsed,'station_diagnostic':diagnostic,'protocol_warnings':protocol_warnings,
+             'raw':result.get('raw','') if not last_error else diagnostic.get('raw',''),
+             'violations':{},'risks':[],'latency':time.perf_counter()-selected['started'],
              'error':last_error or None,'tokens_out':result.get('tokens_out',0) if not last_error else 0}
         job.windows_seen+=1;job.windows_done=job.windows_seen;job.window_results.append(row)
         job.window_results=job.window_results[-200:];library.record(job,row);job._archived_windows+=1
         job.events.put({'type':'window',**row,'index':job.windows_seen,'cumulative':job.windows_seen,'hits':[],'progress':job.progress})
-        fresh=ledger.alarms()
-        for alert in fresh:
-            anchor=('interval_' if alert.get('person_id') else 'station_interval_')+alert['interval_id']
-            alert['window_ids']=[anchor,wid]
-        if fresh:
-            job.alerts.extend(fresh);job.alerts=job.alerts[-500:]
-            job.events.put({'type':'alerts','alerts':job.alerts});log(f'[{job.job_id[:8]}] 工位告警 {len(fresh)} 条')
+        publish_alarms(wid if not last_error else None)
         persist();publish()
     try:
         job.state='running';job.message='工位人员连续统计中，大模型异步核验'
@@ -242,6 +251,7 @@ def run_station_job(job, source, cfg, session, library, store, log):
                 if previous: save_frame(previous)
             previous=sample
             collect()
+            publish_alarms()
             if future is None and (last_review<0 or timestamp-last_review>=ledger.policy['review_interval_sec'] or (transition and timestamp-last_review>=3)): submit()
             if timestamp-last_publish>=1:
                 job.message=f'工位统计 {timestamp:.1f} 秒 · '+(f'{sum(ledger.counts.values())} 人' if observable else '画面不可观察，未知计时')+f' · {model_status}'

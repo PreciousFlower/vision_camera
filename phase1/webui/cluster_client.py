@@ -688,18 +688,44 @@ class ServiceSession:
     def review_workstations(self, frames_b64, evidence, stations, people, profile=None):
         import requests
         from civility.station_review import validate_request, validate_result
+        from civility.prompts import extract_json
         payload={'frames':[{'b64':b} for b in frames_b64],'evidence':evidence,
                  'stations':stations,'people':people,'max_new_tokens':(profile or {}).get('defaults',{}).get('max_new_tokens',1536),
                  'behavior_rules':[{k:b.get(k) for k in ('id','name','definition','evidence_required','counter_examples')} for b in (profile or {}).get('behaviors',[]) if b.get('enabled',True)]}
         checked=validate_request(payload)
+        started=time.perf_counter()
+        diagnostic={'request_frame_ids':[e['frame_id'] for e in evidence],
+                    'request_time_sec':[e['time_sec'] for e in evidence],
+                    'attempts':1,'raw':'','problems':[]}
         try:
             response=requests.post(f'{self.base_url()}/workstation-review',json=payload,timeout=120)
             response.raise_for_status();result=response.json()
-            if not isinstance(result,dict) or result.get('error'): raise ValueError('工位模型核验失败：'+str(result.get('error') if isinstance(result,dict) else '响应格式错误'))
-            result['parsed']=validate_result(result.get('parsed'),checked)
+            if not isinstance(result,dict):raise ValueError('工位模型核验失败：响应格式错误')
+            diagnostic.update({key:result.get(key) for key in ('tokens_out','finish_reason','latency_sec','timing') if key in result})
+            diagnostic['raw']=result.get('raw') if isinstance(result.get('raw'),str) else ''
+            diagnostic['problems']=[p[:500] for p in result.get('problems',[])[:24] if isinstance(p,str)] if isinstance(result.get('problems'),list) else []
+            error=result.get('error')
+            # A still-running older service may reject a representation that the
+            # local strict-reference normalizer can safely recover. Revalidate
+            # its exact original JSON, not a guessed frame or a second GPU job.
+            schema_error=isinstance(error,str) and error.startswith('Schema 校验失败:')
+            if error and not schema_error:raise ValueError('工位模型核验失败：'+str(error))
+            obj=result.get('parsed')
+            if schema_error or not isinstance(obj,dict):obj=extract_json(diagnostic['raw'])
+            result['parsed']=validate_result(obj,checked)
+            warnings=result['parsed'].get('validation_warnings',[])
+            if schema_error:warnings=[*warnings,'旧服务格式校验失败，已仅按实际提供的帧引用重新核验原始输出']
+            result.update(error=None,valid=True,protocol_warnings=warnings,
+                          station_diagnostic=diagnostic,roundtrip_sec=round(time.perf_counter()-started,3))
             return result
         except (requests.exceptions.RequestException,ValueError) as exc:
-            raise ClusterError(f'工位复核请求失败：{exc}') from exc
+            diagnostic['roundtrip_sec']=round(time.perf_counter()-started,3)
+            if isinstance(exc,ValueError):diagnostic['problems']=[*diagnostic['problems'],str(exc)[:500]][:24]
+            # The runner archives this attribute so malformed model output can
+            # be inspected without recording credentials, paths, or image b64.
+            error=ClusterError(f'工位复核请求失败：{exc}')
+            error.station_diagnostic=diagnostic
+            raise error from exc
 
     def reload_behaviors(self, behaviors_json_path: str) -> None:
         import requests

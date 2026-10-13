@@ -32,7 +32,7 @@ class DetectStartTests(unittest.TestCase):
         return job
 
     def start(self, **body):
-        return self.client.post("/api/detect/start-review", json=body)
+        return self.client.post("/api/detect/start-review", json={'profile_id':'current',**body})
 
     def test_rejected_duplicate_start_preserves_active_settings(self):
         for state in ("running", "extracting"):

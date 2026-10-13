@@ -13,7 +13,7 @@ from civility.station_review import validate_request,validate_result
 
 
 SCENE={'stations':[{'id':'a','name':'1号工位','polygon':[[0,0],[.45,0],[.45,1],[0,1]],'expected_people':1}],
-       'policy':{'confirm_sec':1,'away_sec':2,'empty_sec':2,'review_interval_sec':5}}
+       'policy':{'confirm_sec':1,'away_sec':2,'empty_sec':2,'review_interval_sec':5,'alarm_mode':'confirmed'}}
 INSIDE={'person_id':'P001','bbox':[.1,.1,.3,.9]}
 OUTSIDE={'person_id':'P001','bbox':[.7,.1,.9,.9]}
 
@@ -163,9 +163,11 @@ class ProfilesAndProtocolTests(unittest.TestCase):
         self.assertEqual(validate_result(result,request)['stations'][0]['count'],1)
         for key,value in [('person_id','P999'),('frame_id','f_999'),('state','guess'),('person_id',[])]:
             wrong=copy.deepcopy(result);wrong['observations'][0][key]=value
-            with self.assertRaises(ValueError):validate_result(wrong,request)
+            checked=validate_result(wrong,request)
+            self.assertEqual(checked['observations'],[]);self.assertEqual(len(checked['stations']),1)
         wrong=copy.deepcopy(result);wrong['stations'][0]['count']=True
-        with self.assertRaises(ValueError):validate_result(wrong,request)
+        checked=validate_result(wrong,request)
+        self.assertFalse(checked['stations'][0]['visible']);self.assertIsNone(checked['stations'][0]['count'])
     def test_tracker_reordering_short_occlusion_and_ambiguity(self):
         tracker=AnonymousTracker(max_age=3)
         first=tracker.update(0,[{'bbox':[.1,.1,.25,.9]},{'bbox':[.7,.1,.9,.9]}])
