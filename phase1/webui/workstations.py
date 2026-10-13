@@ -265,7 +265,7 @@ class StationLedger:
                     checked={**check,'time_sec':by_id[check['frame_id']]['time_sec']}
                     if checked['time_sec']>=self.station_checks.get(check['station_id'],{}).get('time_sec',-1): self.station_checks[check['station_id']]=checked
                     span=next((s for s in reversed(self.station_intervals) if s['station_id']==check['station_id'] and s['since']<=checked['time_sec'] and (s['end'] is None or checked['time_sec']<s['end'])),None)
-                    if span is not None: span['ai_check']=checked
+                    if span is not None and checked['time_sec']>=span.get('ai_check',{}).get('time_sec',-1): span['ai_check']=checked
                     residents=[p for p in self.people.values() if p.get('home_station')==check['station_id'] and p.get('identity_status')!='pending']
                     if len(residents)==1:
                         person=residents[0];at=checked['time_sec']
@@ -294,7 +294,7 @@ class StationLedger:
         with self.lock:
             if self.time is None: return []
             fresh=[]
-            def add(key,bid,name,since,frame,reason,person=None,station=None,end=None,interval_id=None,status='confirmed',threshold=0):
+            def add(key,bid,name,since,frame,reason,person=None,station=None,end=None,interval_id=None,status='confirmed',threshold=0,closed=False,review_time=None,resolution_reason=None,actual_status=None):
                 if bid not in self.enabled:return
                 until=self.time if end is None else end
                 lo,hi=since,until
@@ -304,18 +304,48 @@ class StationLedger:
                     else:lo=mid
                 deadline=round(hi,6)
                 previous=next((a for a in self.alerts if a.get('alarm_id')==key),None)
-                if previous and previous.get('review_status','confirmed')==status:return
                 if status=='rejected' and previous is None:return
                 if self.policy['alarm_mode']=='confirmed' and status!='confirmed' and previous is None:return
+                # A later unknown picture or an expired review cannot erase a
+                # positively observed historical event. Only an explicit model
+                # contradiction may withdraw it, with a visible audit record.
+                latest_status=status if actual_status is None else actual_status
+                previous_status=previous.get('review_status','unknown') if previous else None
+                if previous_status in ('confirmed','rejected') and status=='pending':status=previous_status
+                lifecycle='withdrawn' if status=='rejected' else 'resolved' if closed else 'active'
                 alert={'behavior_id':bid,'behavior_name':name,'severity':'medium','t_start':since,'t_end':until,
                        'reason':reason,'evidence_frame':frame,'person_id':person,'station_id':station,
                        'source':'workstation','duration_sec':until-since,'active_duration_sec':self._active_seconds(since,until),
                        'interval_id':interval_id or key,'window_ids':[],'alarm_id':key,'review_status':status,
                        'provisional':status=='pending','threshold_time_sec':deadline,'trigger_time_sec':self.time,
-                       'verification_delay_sec':max(0,self.time-deadline) if status=='confirmed' else None}
+                       'verification_delay_sec':max(0,self.time-deadline) if status=='confirmed' else None,
+                       'lifecycle':lifecycle,'resolved_time_sec':until if closed else None,
+                       'resolution_reason':resolution_reason if closed else None,
+                       'latest_review_status':latest_status,'latest_review_time_sec':review_time,
+                       'latest_review_reason':reason}
+                if previous_status in ('confirmed','rejected') and latest_status not in ('confirmed','rejected'):
+                    alert['reason']=previous['reason'];alert['evidence_frame']=previous.get('evidence_frame')
+                if status=='rejected':
+                    alert.update(retracted_time_sec=previous.get('retracted_time_sec',self.time) if previous_status=='rejected' else self.time,
+                                 retraction_reason=previous.get('retraction_reason',reason) if previous_status=='rejected' else reason,
+                                 retraction_evidence_frame=previous.get('retraction_evidence_frame',frame) if previous_status=='rejected' else frame,
+                                 retraction_frame_time_sec=previous.get('retraction_frame_time_sec',review_time) if previous_status=='rejected' else review_time)
+                changed=not previous or previous_status!=status or previous.get('lifecycle','active')!=lifecycle
+                review_changed=not previous or previous.get('latest_review_status')!=latest_status or previous.get('latest_review_time_sec')!=review_time
+                history=copy.deepcopy(previous.get('status_history',[])) if previous else []
+                if previous and not history:
+                    history.append({'time_sec':previous['trigger_time_sec'],'review_status':previous_status,
+                                    'lifecycle':previous.get('lifecycle','active'),'reason':previous['reason'],
+                                    'evidence_frame':previous.get('evidence_frame')})
+                if changed:
+                    history.append({'time_sec':self.time,'review_status':status,'lifecycle':lifecycle,
+                                    'reason':alert['reason'],'evidence_frame':alert.get('evidence_frame')})
+                alert['status_history']=history
                 if previous:
                     alert['trigger_time_sec']=previous['trigger_time_sec'];alert['window_ids']=previous.get('window_ids',[])
-                    previous.update(alert);fresh.append(previous)
+                    if previous_status==status=='confirmed':alert['verification_delay_sec']=previous.get('verification_delay_sec')
+                    previous.update(alert)
+                    if changed or review_changed:fresh.append(previous)
                 else:self.alerted.add(key);self.alerts.append(alert);fresh.append(alert)
             for interval in self.intervals:
                 pid=interval['person_id'];person=self.people[pid]
@@ -323,24 +353,33 @@ class StationLedger:
                 if (interval['state']=='away' and person.get('identity_status')!='pending'
                         and self._active_seconds(interval['start'],until)>=self.policy['away_sec']
                         and self._work_time(until if interval['end'] is None else max(interval['start'],until-1e-6))):
-                    status=interval.get('review_status','pending');status=status if status in ('confirmed','rejected') else 'pending'
-                    if status=='confirmed' and interval['end'] is None and self.time-interval.get('review_time',-1)>max(30,self.policy['review_interval_sec']*3):status='pending'
+                    actual_status=interval.get('review_status','pending');status=actual_status if actual_status in ('confirmed','rejected') else 'pending'
+                    if status=='confirmed' and interval['end'] is None and self.time-interval.get('review_time',-1)>max(30,self.policy['review_interval_sec']*3):
+                        status='pending';actual_status='stale'
+                    closed=interval['end'] is not None
+                    following=next((i for i in self.intervals if i['person_id']==pid and i['start']==interval['end']),None) if closed else None
+                    returned=bool(following and following['state']=='at_station') or (interval['end']==self.time and person.get('visible') and person.get('observed_station')==person.get('home_station'))
+                    resolution='returned' if returned else 'session_ended' if getattr(self,'finished',False) and interval['end']==self.time else 'observation_lost'
                     add(interval['interval_id'],'station_away','离岗超时',interval['start'],interval.get('review_frame') or interval.get('frame_start'),
-                        f"{person['name']} 已观测离岗 {until-interval['start']:.1f} 秒；{interval.get('model_reason') or '已到设定阈值，等待大模型复核'}",pid,person.get('home_station'),until,status=status,threshold=self.policy['away_sec'])
+                        f"{person['name']} 已观测离岗 {until-interval['start']:.1f} 秒；{interval.get('model_reason') or '已到设定阈值，等待大模型复核'}",pid,person.get('home_station'),until,status=status,threshold=self.policy['away_sec'],closed=closed,review_time=interval.get('review_time'),resolution_reason=resolution,actual_status=actual_status)
             for status in self.station_intervals:
                 sid=status['station_id'];check=status.get('ai_check');until=status['end'] if status['end'] is not None else self.time
                 if not self._work_time(until if status['end'] is None else max(status['since'],until-1e-6)): continue
-                if check and check.get('visible') is False:continue
+                if check and check.get('visible') is False and not any(a.get('interval_id')==status['interval_id'] for a in self.alerts):continue
                 verified=bool(check and check['visible'] and check['count']==status['count'])
                 disputed=bool(check and check['visible'] and check['count']!=status['count'])
-                review_status='confirmed' if verified else 'rejected' if disputed else 'pending'
-                if status['end'] is None and check and self.time-check['time_sec']>max(30,self.policy['review_interval_sec']*3):review_status='pending'
+                actual_status='confirmed' if verified else 'rejected' if disputed else 'uncertain' if check else 'pending'
+                review_status=actual_status if actual_status in ('confirmed','rejected') else 'pending'
+                if status['end'] is None and check and self.time-check['time_sec']>max(30,self.policy['review_interval_sec']*3):
+                    review_status='pending';actual_status='stale'
                 duration=self._active_seconds(status['since'],until)
                 station=next(s for s in self.scene['stations'] if s['id']==sid)
+                following=next((s for s in self.station_intervals if s['station_id']==sid and s['since']==status['end']),None) if status['end'] is not None else None
+                resolution='station_normal' if following and following['category']=='normal' else 'session_ended' if getattr(self,'finished',False) and status['end']==self.time else 'observation_lost'
                 if status['category']=='empty' and duration>=self.policy['empty_sec']:
-                    add(f'{sid}-empty-{status["since"]}','station_empty','工位空缺',status['since'],(check or {}).get('frame_id') or status.get('frame_id'),f"{station['name']} 人数低于预期 {duration:.1f} 秒；{(check or {}).get('reason') or '已到设定阈值，待大模型复核'}",station=sid,end=until,interval_id=status['interval_id'],status=review_status,threshold=self.policy['empty_sec'])
+                    add(f'{sid}-empty-{status["since"]}','station_empty','工位空缺',status['since'],(check or {}).get('frame_id') or status.get('frame_id'),f"{station['name']} 人数低于预期 {duration:.1f} 秒；{(check or {}).get('reason') or '已到设定阈值，待大模型复核'}",station=sid,end=until,interval_id=status['interval_id'],status=review_status,threshold=self.policy['empty_sec'],closed=status['end'] is not None,review_time=(check or {}).get('time_sec'),resolution_reason=resolution,actual_status=actual_status)
                 elif status['category']=='over' and duration>=self.policy['confirm_sec']:
-                    add(f'{sid}-over-{status["since"]}','station_over_capacity','工位人数超限',status['since'],(check or {}).get('frame_id') or status.get('frame_id'),f"{station['name']} 观测 {status['count']} 人，预期 {station['expected_people']} 人；{(check or {}).get('reason') or '人数超限，待大模型复核'}",station=sid,end=until,interval_id=status['interval_id'],status=review_status,threshold=self.policy['confirm_sec'])
+                    add(f'{sid}-over-{status["since"]}','station_over_capacity','工位人数超限',status['since'],(check or {}).get('frame_id') or status.get('frame_id'),f"{station['name']} 观测 {status['count']} 人，预期 {station['expected_people']} 人；{(check or {}).get('reason') or '人数超限，待大模型复核'}",station=sid,end=until,interval_id=status['interval_id'],status=review_status,threshold=self.policy['confirm_sec'],closed=status['end'] is not None,review_time=(check or {}).get('time_sec'),resolution_reason=resolution,actual_status=actual_status)
             return fresh
 
     def _active_seconds(self,start,end):
@@ -365,6 +404,7 @@ class StationLedger:
 
     def finish(self):
         with self.lock:
+            self.finished=True
             if self.time is None:return
             for span in [*self.intervals,*self.station_intervals]:
                 if span['end'] is None:span['end']=self.time
@@ -400,11 +440,16 @@ class StationLedger:
             latest['first_seen']=min(a['first_seen'],b['first_seen'])
             latest['linked_ids']=list(dict.fromkeys([source,target,*a.get('linked_ids',[]),*b.get('linked_ids',[])]))
             self.aliases[source]=target
+            for alert in self.alerts:
+                if alert.get('person_id')==source:
+                    alert.setdefault('original_person_id',source);alert['person_id']=target
             self.people[target]=latest;self.people.pop(source)
             return target
 
     def snapshot(self, include_intervals=False):
         with self.lock:
+            from .station_identity import canonical_alarm
+            alert_history=[canonical_alarm(a,self.aliases) for a in self.alerts[-500:]]
             now=self.time or 0; people=[];by_person={}
             for interval in self.intervals:by_person.setdefault(interval['person_id'],[]).append(interval)
             for pid,p in self.people.items():
@@ -435,12 +480,44 @@ class StationLedger:
                       'resident_count':confirmed[s['id']],'ai_check':self.station_checks.get(s['id'])} for s in self.scene['stations']],
                     'observed_people':sum(self.counts.values()) if getattr(self,'view_observable',True) else None,'resident_people':sum(confirmed.values()),
                     'max_observed_people':self.max_observed_people,
-                    'alerts':copy.deepcopy([a for a in self.alerts if a.get('review_status')!='rejected'][-500:]),'alarm_history':copy.deepcopy(self.alerts[-500:]),'gaps':copy.deepcopy(self.gaps[-100:]),'aliases':dict(self.aliases),'scheduled_active':self._work_time() if self.time is not None else False,
+                    'alerts':alert_history,'alarm_history':copy.deepcopy(alert_history),'gaps':copy.deepcopy(self.gaps[-100:]),'aliases':dict(self.aliases),'scheduled_active':self._work_time() if self.time is not None else False,
                     'timeline':copy.deepcopy(self.intervals[-200:]),'station_timeline':copy.deepcopy(self.station_intervals[-200:]),'policy':self.policy,
                     'note':'时间来自连续抽样观测；未知区间单列。在岗指位于关联工位区域，匿名编号不代表实名身份。'}
             if include_intervals:
                 result['intervals']=copy.deepcopy(self.intervals);result['station_intervals']=copy.deepcopy(self.station_intervals)
             return result
+
+
+def restore_alarm_history(report):
+    """Expose withdrawn legacy alarms without inventing missing audit times.
+
+    Older persisted summaries filtered ``alerts`` but retained ``alarm_history``.
+    This read-time migration preserves the original model decisions and evidence.
+    """
+    report=copy.deepcopy(report)
+    from .station_identity import canonical_alarm
+    spans={s['interval_id']:s for s in [*report.get('intervals',[]),*report.get('station_intervals',[])]}
+    history=[];seen=set()
+    for alert in [*report.get('alarm_history',[]),*report.get('alerts',[])]:
+        key=alert.get('alarm_id') or (alert.get('interval_id'),alert.get('behavior_id'),alert.get('t_start'))
+        if key in seen:continue
+        seen.add(key);span=spans.get(alert.get('interval_id'),{})
+        if 'review_status' not in alert:
+            explicit=span.get('review_status')
+            alert['review_status']=explicit if explicit in ('confirmed','rejected') else 'unknown'
+        status=alert['review_status']
+        closed=span.get('end') is not None
+        if 'lifecycle' not in alert:
+            alert['lifecycle']='withdrawn' if status=='rejected' else 'resolved' if closed else 'active'
+        if closed:
+            alert.setdefault('resolved_time_sec',span['end']);alert.setdefault('resolution_reason','interval_closed')
+        if status=='rejected':
+            alert.setdefault('retraction_reason',alert.get('reason','旧记录未保存撤回原因'))
+            alert.setdefault('retracted_time_sec',None)
+        alert.setdefault('status_history',[])
+        history.append(canonical_alarm(alert,report.get('aliases',{})))
+    report['alerts']=history[-500:];report['alarm_history']=copy.deepcopy(report['alerts'])
+    return report
 
 
 class StationStore:
@@ -462,7 +539,7 @@ class StationStore:
             row=db.execute('SELECT revision, config, summary FROM sessions WHERE job_id=?',(job_id,)).fetchone()
         if not row: raise FileNotFoundError('工位统计不存在')
         if revision and row[0]!=revision: raise ValueError('工位分析版本已更新')
-        return {'job_id':job_id,'analysis_revision':row[0],'scene':json.loads(row[1]),**json.loads(row[2])}
+        return restore_alarm_history({'job_id':job_id,'analysis_revision':row[0],'scene':json.loads(row[1]),**json.loads(row[2])})
 
     def delete(self, job_id):
         with self.lock,closing(self._db()) as db,db: db.execute('DELETE FROM sessions WHERE job_id=?',(job_id,))

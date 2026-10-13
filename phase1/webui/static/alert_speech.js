@@ -2,6 +2,14 @@
 (function(root){
   'use strict';
   class AlertSpeech {
+    static isMandarinVoice(voice){
+      if(!voice||typeof voice.lang!=='string')return false;
+      const lang=voice.lang.replace(/_/g,'-').toLowerCase();
+      const name=String(voice.name||'');
+      if(/(?:^|-)yue(?:-|$)|(?:^|-)(hk|tw|mo)(?:-|$)|hant/.test(lang)
+          ||/cantonese|hong\s*kong|taiwan|粤语|廣東話|广东话|香港|台灣|台湾/i.test(name))return false;
+      return /^(?:zh|cmn)-(?:cn|hans(?:-cn)?)$|^zh-cmn-hans-cn$/.test(lang);
+    }
     constructor({synth=root.speechSynthesis, Utterance=root.SpeechSynthesisUtterance,
                  onStatus=()=>{}, storage=root.sessionStorage, now=()=>Date.now(),
                  fetchAudio=root.fetch?.bind(root), makeAudio=root.Audio?()=>new root.Audio():null,
@@ -11,7 +19,7 @@
       this.queue=[];this.active=null;this.timer=null;this.sequence=0;
       this.seen=new Set();
       this.voice='auto';this.rate=1;this.fetchAudio=fetchAudio;this.makeAudio=makeAudio;this.urls=urls;
-      this.audio=null;this.audioUrl=null;this.controller=null;this.neuralRetryAt=0;this.lastEngine='系统语音';
+      this.audio=null;this.audioUrl=null;this.controller=null;this.requestTimer=null;this.neuralRetryAt=0;this.lastEngine='标准普通话 · 系统语音';
       this.fallbackSequence=0;
       try { const saved=JSON.parse(storage.getItem('civility-spoken-alerts')||'[]');
         if(Array.isArray(saved))saved.slice(-2000).forEach(key=>this.seen.add(key));
@@ -24,6 +32,7 @@
       this.volume=Number.isFinite(Number(volume))?Math.max(0,Math.min(1,Number(volume))):1;
     }
     clearAudio(){
+      clearTimeout(this.requestTimer);this.requestTimer=null;
       if(this.controller){this.controller.abort();this.controller=null;}
       if(this.audio){this.audio.onended=null;this.audio.onerror=null;this.audio.pause();this.audio.removeAttribute?.('src');this.audio=null;}
       if(this.audioUrl){this.urls.revokeObjectURL(this.audioUrl);this.audioUrl=null;}
@@ -34,6 +43,7 @@
       return JSON.stringify([job,a.behavior_id||a.name,time,a.severity||'medium']);
     }
     alerts(values){return Array.isArray(values)?values.filter(a=>a&&typeof a==='object'&&typeof a.behavior_id==='string'&&a.behavior_id&&Number.isFinite(Number(a.t_start))):[];}
+    speakable(a){return a.review_status!=='rejected'&&!['withdrawn','resolved'].includes(a.lifecycle);}
     remember(key){
       this.seen.add(key);while(this.seen.size>2000)this.seen.delete(this.seen.values().next().value);
       try{this.storage.setItem('civility-spoken-alerts',JSON.stringify([...this.seen]));}catch(e){}
@@ -51,44 +61,51 @@
     }
     test(text='你好，我会提醒你关注现场，请保持留意。'){
       if(!this.supported)return this.onStatus('当前浏览器不支持语音播报');
-      this.neuralRetryAt=0;
-      // Preview uses the same player, so it never overlaps a live alert.
+      const interrupted=this.active&&!this.active.preview?this.active:null;
+      // Every click owns a fresh playback generation. Late speech/network
+      // callbacks cannot complete or play over the newest preview.
+      this.sequence++;clearTimeout(this.timer);this.timer=null;
+      this.active=null;this.clearAudio();this.synth?.cancel();
       this.queue=this.queue.filter(item=>!item.preview);
+      if(interrupted)this.queue.unshift(interrupted);
       this.queue.unshift({text,created:this.now(),preview:true});this.drain();
     }
     utterance(text){
       const u=new this.Utterance(text);u.lang='zh-CN';u.volume=this.volume;u.rate=this.rate;u.pitch=1;
-      const voices=this.synth.getVoices()||[], chinese=voices.filter(v=>/^zh/i.test(v.lang));
+      const chinese=(this.synth.getVoices()||[]).filter(AlertSpeech.isMandarinVoice);
       const preferred=this.voice.startsWith('browser:')?this.voice.slice(8):'';
-      u.voice=voices.find(v=>preferred&&(v.voiceURI||v.name)===preferred)
-        ||chinese.find(v=>/natural|neural|晓晓|xiaoxiao/i.test(v.name))
-        ||chinese.find(v=>/^zh[-_]CN/i.test(v.lang))||chinese[0]||null;
-      if(u.voice)u.lang=u.voice.lang;
+      u.voice=preferred?chinese.find(v=>(v.voiceURI||v.name)===preferred)
+        :chinese.find(v=>v.localService===true)||chinese[0];
+      if(!u.voice)return null;
       return u;
     }
     playBrowser(text,sequence,finish){
       if(sequence!==this.sequence)return;
       if(!this.synth||!this.Utterance)return finish(true);
-      const u=this.utterance(text);u.onend=()=>finish();u.onerror=()=>finish(true);
-      this.lastEngine='系统语音';
+      const u=this.utterance(text);
+      if(!u)return finish(true,this.voice.startsWith('browser:')
+        ?'所选声音不是可用的标准普通话，请重新选择标准普通话声音'
+        :'未找到标准普通话声音，请在系统语音设置中安装中文（简体，中国）声音后重试');
+      u.onend=()=>finish();u.onerror=()=>finish(true);
+      this.lastEngine='标准普通话 · 系统语音';
       try{this.synth.speak(u);}catch(e){finish(true);}
     }
     fallback(text,sequence,finish){
       if(sequence!==this.sequence||this.fallbackSequence===sequence)return;
       this.fallbackSequence=sequence;this.clearAudio();this.neuralRetryAt=this.now()+60000;
-      this.onStatus('自然语音暂不可用，本次使用系统声音');this.playBrowser(text,sequence,finish);
+      this.onStatus('自然语音暂不可用，本次使用标准普通话系统声音');this.playBrowser(text,sequence,finish);
     }
     async playNeural(text,sequence,finish){
       if(!this.fetchAudio||!this.makeAudio)throw new Error('Audio unavailable');
       const controller=new AbortController();this.controller=controller;
-      const timer=setTimeout(()=>controller.abort(),10500);
+      const timer=setTimeout(()=>controller.abort(),10500);this.requestTimer=timer;
       let blob;
       try{
         const response=await this.fetchAudio('/api/speech/synthesize',{method:'POST',signal:controller.signal,
           headers:{'Content-Type':'application/json'},body:JSON.stringify({text,voice:this.voice.slice(7),rate:this.rate})});
         if(!response.ok||!/^audio\/(mpeg|wav)/i.test(response.headers.get('Content-Type')||''))throw new Error('Neural speech unavailable');
         blob=await response.blob();if(!blob.size)throw new Error('Empty audio');
-      }finally{clearTimeout(timer);}
+      }finally{clearTimeout(timer);if(this.requestTimer===timer)this.requestTimer=null;}
       if(sequence!==this.sequence)return;
       this.audioUrl=this.urls.createObjectURL(blob);const audio=this.makeAudio();this.audio=audio;
       audio.volume=this.volume;audio.src=this.audioUrl;this.lastEngine='自然语音';
@@ -96,15 +113,18 @@
       await audio.play();
     }
     notify(job,alerts,{demo=false,live=false}={}){
-      const current=new Set(this.alerts(alerts).map(a=>this.key(job,a,live)));
-      this.queue=this.queue.filter(item=>!(item.job===job&&item.provisional&&!current.has(item.key)));
-      if(this.active?.job===job&&this.active.provisional&&!current.has(this.active.key)){
+      const values=this.alerts(alerts);
+      const current=new Set(values.filter(a=>this.speakable(a)).map(a=>this.key(job,a,live)));
+      const ended=new Set(values.filter(a=>!this.speakable(a)).map(a=>this.key(job,a,live)));
+      const cancelled=item=>ended.has(item.key)||(item.provisional&&!current.has(item.key));
+      this.queue=this.queue.filter(item=>!(item.job===job&&cancelled(item)));
+      if(this.active?.job===job&&cancelled(this.active)){
         this.sequence++;clearTimeout(this.timer);this.active=null;this.clearAudio();this.synth?.cancel();
-        this.onStatus('预警已撤回，已取消这条语音');
+        this.onStatus('告警已结束或撤回，已取消这条语音');
       }
-      for(const a of this.alerts(alerts)){
+      for(const a of values){
         const key=this.key(job,a,live);if(this.seen.has(key))continue;this.remember(key);
-        if(!this.enabled)continue;
+        if(!this.enabled||!this.speakable(a))continue;
         const name=String(a.behavior_name||a.name||a.behavior_id||'现场风险').slice(0,40);
         const reason=String(a.reason||a.alert_reason||a.observable||'').slice(0,80);
         const at=a.source==='workstation'&&Number.isFinite(Number(a.threshold_time_sec))?a.threshold_time_sec:a.t_start;
@@ -119,15 +139,15 @@
       this.queue=this.queue.filter(item=>this.now()-item.created<20000);
       const item=this.queue.shift();if(!item)return;
       this.active=item;const sequence=++this.sequence;
-      const finish=(failed=false)=>{
+      const finish=(failed=false,message='')=>{
         if(sequence!==this.sequence)return;
         this.sequence++;clearTimeout(this.timer);this.clearAudio();this.active=null;
-        if(failed){this.enable(false);this.onStatus('语音播放失败，请检查声音权限、音箱和系统音量，再重新启用');}
+        if(failed){this.enable(false);this.onStatus(message||'语音播放失败，请检查声音权限、音箱和系统音量，再重新启用');}
         else{this.onStatus((item.preview?'试听完成':'语音告警已启用')+' · '+this.lastEngine);this.drain();}
       };
       this.timer=setTimeout(()=>{if(sequence!==this.sequence)return;this.synth?.cancel();finish(true);},30000);
       this.onStatus('正在播报：'+item.text);
-      if(this.voice.startsWith('neural:')&&this.now()>=this.neuralRetryAt){
+      if(!item.preview&&this.voice.startsWith('neural:')&&this.now()>=this.neuralRetryAt){
         this.playNeural(item.text,sequence,finish).catch(()=>{
           this.fallback(item.text,sequence,finish);
         });

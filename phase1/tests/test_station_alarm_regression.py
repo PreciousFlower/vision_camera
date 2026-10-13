@@ -80,7 +80,8 @@ class StationAlarmRegressionTests(unittest.TestCase):
         self.assertEqual(ledger.alarms()[0]['review_status'],'pending')
         ledger.review({'observations':[{'person_id':'P001','station_id':'a','state':'at_station','frame_id':'f_7','reason':'仍在原工位，位置检测不一致'}]},[{'frame_id':'f_7','time_sec':7}])
         self.assertEqual(ledger.alarms()[0]['review_status'],'rejected')
-        self.assertEqual(ledger.snapshot()['alerts'],[])
+        self.assertEqual(len(ledger.snapshot()['alerts']),1)
+        self.assertEqual(ledger.snapshot()['alerts'][0]['lifecycle'],'withdrawn')
         self.assertEqual(ledger.snapshot()['alarm_history'][0]['review_status'],'rejected')
     def test_single_station_empty_after_grace_is_away_and_model_can_confirm(self):
         ledger=StationLedger(SCENE)

@@ -11,6 +11,7 @@ from pathlib import Path
 import time
 
 from .person_tracking import PersonDetector, AnonymousTracker
+from .station_identity import canonical_id, canonical_samples, canonical_review
 from .workstations import StationLedger
 
 
@@ -130,7 +131,7 @@ def run_station_job(job, source, cfg, session, library, store, log):
         for alert in updates:
             anchor=('interval_' if alert.get('person_id') else 'station_interval_')+alert['interval_id']
             alert['window_ids']=[anchor]+([review_window_id] if review_window_id and alert.get('review_status')=='confirmed' else [])
-        job.alerts=copy.deepcopy([a for a in ledger.alerts if a.get('review_status')!='rejected'][-500:])
+        job.alerts=copy.deepcopy(ledger.alerts[-500:])
         if previous is not None:save_frame(previous)
         job.events.put({'type':'alerts','alerts':job.alerts,'alarm_updates':copy.deepcopy(updates)})
         log(f'[{job.job_id[:8]}] 工位告警状态更新 {len(updates)} 条（阈值检查独立于模型请求）')
@@ -160,16 +161,19 @@ def run_station_job(job, source, cfg, session, library, store, log):
         nonlocal future,package,last_review
         if not buffer or future is not None: return
         samples=list(buffer)
+        with ledger.lock:
+            samples=canonical_samples(samples,dict(ledger.aliases))
+            snapshot=ledger.snapshot()
+            needs_history={i['person_id'] for i in ledger.intervals if i['state']=='away' and i.get('review_status')!='confirmed'}
         if len(samples)>8:
             # Endpoints and chronological context; latest state always included.
             samples=[samples[round(i*(len(samples)-1)/7)] for i in range(8)]
-        snapshot=ledger.snapshot();stations=job.station_scene['stations']
+        stations=job.station_scene['stations']
         # Cycle all configured stations / people through bounded model requests.
         batch_no=job.windows_seen
         chunks=[stations[i:i+4] for i in range(0,len(stations),4)]
         subset=chunks[batch_no%len(chunks)]
         people=snapshot['people'];visible_ids={t['person_id'] for t in samples[-1]['tracks']}
-        needs_history={i['person_id'] for i in ledger.intervals if i['state']=='away' and i.get('review_status')!='confirmed'}
         people=sorted(people,key=lambda p:(p['person_id'] not in needs_history,p['review_status']=='confirmed',p['person_id'] not in visible_ids))[:6]
         images=[];evidence=[]
         person_ids={p['person_id'] for p in people}
@@ -191,11 +195,15 @@ def run_station_job(job, source, cfg, session, library, store, log):
             result=future.result()
             from civility.station_review import validate_result
             parsed=validate_result(result.get('parsed'),{'evidence':selected['evidence'],'people':selected['people'],'stations':selected['stations']})
-            ledger.review(parsed,selected['evidence']);last_review_time=selected['evidence'][-1]['time_sec']
+            with ledger.lock:
+                aliases=dict(ledger.aliases)
+                parsed=canonical_review(parsed,aliases,{p['person_id'] for p in selected['people']})
+                ledger.review(parsed,selected['evidence'])
+            last_review_time=selected['evidence'][-1]['time_sec']
             model_status='演示核验（模拟结论）' if job.use_mock else '已由部署的大模型核验'
             last_error=''
             diagnostic=result.get('station_diagnostic') or {}
-            protocol_warnings=result.get('protocol_warnings') or parsed.get('validation_warnings') or []
+            protocol_warnings=list(dict.fromkeys((result.get('protocol_warnings') or [])+(parsed.get('validation_warnings') or [])))
             scene=parsed['scene']
         except Exception as exc:
             parsed={'observations':[],'stations':[]};scene='本次工位复核失败，统计保留；未经模型确认不发告警'
@@ -212,9 +220,13 @@ def run_station_job(job, source, cfg, session, library, store, log):
              'frame_labels':[f"t={s['timestamp']:.3f}s" for s in samples],'frame_times':[s['timestamp'] for s in samples],
              'scene':scene,'people':[{'where':o.get('station_id') or '工位外','appearance':o['person_id'],'action':o['state'],'changed':o['reason']} for o in latest_people.values()],
              'station_review':parsed,'station_diagnostic':diagnostic,'protocol_warnings':protocol_warnings,
+             'identity_mapping':[{'from':pid,'to':canonical_id(pid,aliases)}
+                                 for pid in sorted({p['person_id'] for p in selected['people']}) if pid in aliases] if not last_error else [],
              'raw':result.get('raw','') if not last_error else diagnostic.get('raw',''),
              'violations':{},'risks':[],'latency':time.perf_counter()-selected['started'],
              'error':last_error or None,'tokens_out':result.get('tokens_out',0) if not last_error else 0}
+        if row['identity_mapping']:
+            row['identity_note']='人员编号已按人工关联统一展示；原始模型输出保留当时编号。'
         job.windows_seen+=1;job.windows_done=job.windows_seen;job.window_results.append(row)
         job.window_results=job.window_results[-200:];library.record(job,row);job._archived_windows+=1
         job.events.put({'type':'window',**row,'index':job.windows_seen,'cumulative':job.windows_seen,'hits':[],'progress':job.progress})
@@ -233,6 +245,9 @@ def run_station_job(job, source, cfg, session, library, store, log):
             if wall_origin is not None: ledger.wall_origin=wall_origin
             gray=cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
             observable=10<float(gray.mean())<245 and float(cv2.Laplacian(gray,cv2.CV_64F).var())>=2
+            with ledger.lock:
+                aliases=dict(ledger.aliases)
+            tracker.link_identities(aliases)
             tracks=tracker.update(timestamp,detector.detect(image) if observable else [])
             before={p['person_id']:(p['interval']['interval_id'],p['interval']['state']) for p in ledger.people.values()}
             before_stations={sid:s['interval_id'] for sid,s in ledger.station_since.items()}
@@ -280,6 +295,7 @@ def run_station_job(job, source, cfg, session, library, store, log):
             job.error=(job.error+'；' if job.error else '')+f'采集关闭失败：{exc}'
         try:
             ledger.finish()
+            publish_alarms()
             if previous is not None: save_frame(previous)
             persist()
         except Exception as exc:

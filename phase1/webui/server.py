@@ -168,7 +168,7 @@ def runtime_source_signature() -> str:
         (PROJECT / "cluster").glob("*.py")) + [
         Path(__file__), HERE / "cluster_client.py", HERE / "capture.py", HERE / "video_library.py",
         HERE / "motion_highlights.py", HERE / "speech_service.py", HERE / "uploads.py", HERE / "alert_feedback.py",
-        HERE / "behavior_profiles.py", HERE / "workstations.py", HERE / "person_tracking.py", HERE / "workstation_runner.py", HERE / "station_questions.py",
+        HERE / "behavior_profiles.py", HERE / "workstations.py", HERE / "person_tracking.py", HERE / "station_identity.py", HERE / "workstation_runner.py", HERE / "station_questions.py",
         PROJECT / "cluster/serve-vlm.sbatch"]
     digest = hashlib.sha256()
     for path in files:
@@ -1959,13 +1959,16 @@ def create_app():
                 try:
                     saved=checked
                     from .workstations import StationLedger
-                    ledger=StationLedger(saved['scene']);ledger.time=saved['time_sec'];ledger.intervals=saved['intervals'];ledger.alerts=saved.get('alerts',[])
+                    ledger=StationLedger(saved['scene']);ledger.time=saved['time_sec'];ledger.intervals=saved['intervals'];ledger.alerts=saved.get('alarm_history',saved.get('alerts',[]))
                     ledger.aliases=saved.get('aliases',{})
                     ledger.max_observed_people=saved.get('max_observed_people',0);ledger.station_intervals=saved.get('station_intervals',[])
                     for person in saved['people']:
                         person['interval']=next(i for i in reversed(ledger.intervals) if i['person_id']==person['person_id'])
                         person['pending']=None;ledger.people[person['person_id']]=person
-                    ledger.counts={s['id']:s['observed_count'] for s in saved['stations']}
+                    ledger.view_observable=bool(saved.get('view_observable',saved.get('observed_people') is not None))
+                    # None is a public unknown count, not an internal numeric
+                    # observation. Keep the view unknown after editing history.
+                    ledger.counts={s['id']:s['observed_count'] if s['observed_count'] is not None else 0 for s in saved['stations']}
                 except (OSError,ValueError,KeyError) as exc: raise HTTPException(404,'工位统计无法读取') from exc
                 revision=saved['analysis_revision'];profile=saved.get('profile',{})
             else: revision=job._analysis_revision;profile=job.profile
@@ -2035,20 +2038,36 @@ def create_app():
         library, metadata = archived_video(video_id)
         return library.public(metadata)
 
+    def station_presentation(job_id, public, rows):
+        """Apply current explicit identity links without rewriting source evidence."""
+        if public.get('profile',{}).get('mode')!='workstation':
+            return public, rows
+        try:
+            report=api_station_report(job_id,public.get('analysis_revision',''))
+        except HTTPException:
+            return public, rows
+        from .station_identity import canonical_window
+        aliases=report.get('aliases',{})
+        roster={p['person_id'] for p in report.get('people',[])}
+        return {**public,'alerts':report['alerts'],'alarm_history':report.get('alarm_history',report['alerts'])}, [
+            canonical_window(row,aliases,roster) for row in rows]
+
     @app.get("/api/videos/{video_id}/analysis")
     def api_video_analysis(video_id: str):
         library, metadata = archived_video(video_id)
         try:
             metadata, rows = library.snapshot(video_id, metadata.get("analysis_revision", ""))
+            total_rows=len(rows)
+            public, rows=station_presentation(video_id,library.public(metadata),rows[-200:])
             from civility.config import parse_behaviors
             bs=parse_behaviors(metadata['profile']) if metadata.get('profile') else STATE.behaviors
             names = {b.id: b.name for b in bs.behaviors}
             visible = []
-            for index, row in enumerate(rows[-200:], start=max(0, len(rows) - 200) + 1):
+            for index, row in enumerate(rows, start=max(0, total_rows - len(rows)) + 1):
                 # Expose the same presentation fields as a live window, no paths.
                 record = {key: row.get(key) for key in (
                     "window_id", "t_start", "t_end", "frames", "frame_indices", "frame_labels", "frame_times",
-                    "scene", "people", "risks", "evidence_warnings", "verification", "station_review", "station_diagnostic", "protocol_warnings", "raw", "error",
+                    "scene", "people", "risks", "evidence_warnings", "verification", "station_review", "station_diagnostic", "protocol_warnings", "identity_mapping", "identity_note", "raw", "error",
                     "latency", "tokens_out", "sampling", "skipped")}
                 record["index"] = index
                 record["frames"] = row.get("frames") or len(row.get("frame_indices") or [])
@@ -2057,7 +2076,7 @@ def create_app():
                                    **{k: v.get(k) for k in ("confidence", "observable", "alert", "alert_reason")}}
                                   for bid, v in (row.get("violations") or {}).items() if v.get("violation")]
                 visible.append(record)
-            return {**library.public(metadata), "window_results": visible,
+            return {**public, "window_results": visible,
                     "displayed_windows": len(visible)}
         except RevisionConflict as exc:
             raise HTTPException(409, str(exc)) from exc
@@ -2207,9 +2226,16 @@ def create_app():
                 bid=('station_empty' if state=='empty' else 'station_over_capacity') if regional else 'station_away'
                 alarm=next((a for a in report.get('alerts',[]) if a.get('interval_id')==item['interval_id'] and a['behavior_id']==bid),None)
                 review_status=(alarm or {}).get('review_status') or item.get('review_status','pending')
-                violation={'violation':alarm is not None,'provisional':bool(alarm and review_status=='pending'),
-                           'confidence':None,'observable':check.get('reason') if regional else item.get('model_reason') or '人员几何观测，等待模型复核',
-                           'origin':'station_statistics','review_status':review_status}
+                withdrawn=bool(alarm and (review_status=='rejected' or alarm.get('lifecycle')=='withdrawn'))
+                observed_reason=(check.get('reason') if regional else item.get('model_reason')) or '人员几何观测，等待模型复核'
+                observable=((alarm.get('retraction_reason') or alarm.get('latest_review_reason') or alarm.get('reason'))
+                            if withdrawn else (alarm or {}).get('reason')) or observed_reason
+                violation={'violation':alarm is not None and not withdrawn,
+                           'provisional':bool(alarm and not withdrawn and review_status=='pending'),
+                           'confidence':None,'observable':observable,
+                           'origin':'station_statistics','review_status':review_status,
+                           **{key:(alarm or {}).get(key) for key in ('lifecycle','resolution_reason','resolved_time_sec',
+                               'retraction_reason','retracted_time_sec','latest_review_status','latest_review_time_sec','latest_review_reason')}}
                 rows.append({'window_id':prefix+item['interval_id'],'t_start':start,'t_end':item['end'] if item['end'] is not None else report['time_sec'],
                              'frame_indices':[int(fid[2:]) for fid,_ in refs],'frame_labels':[f't={t:.6f}s' for _,t in refs],
                              'frame_times':[t for _,t in refs],'scene':f"{item[owner]} · {state} · 已观测 {duration:.1f} 秒",
@@ -2749,7 +2775,8 @@ def create_app():
                 try:
                     metadata, rows = video_library().snapshot(job_id)
                     if metadata.get("state") in ("done", "stopped", "error"):
-                        return {**video_library().public(metadata), "window_results": rows[-200:], "awaiting_analysis": False, "worker_active": False}
+                        public, rows=station_presentation(job_id,video_library().public(metadata),rows[-200:])
+                        return {**public, "window_results": rows, "awaiting_analysis": False, "worker_active": False}
                     job = recover_upload(job_id)
                     if job:
                         job.message = "本机没有该任务的运行线程，上传已恢复，可重新开始分析"
@@ -2757,7 +2784,8 @@ def create_app():
                     job = recover_upload(job_id)
         if not job:
             raise HTTPException(404, "任务不存在")
-        return {**job.summary(), "window_results": job.window_results}
+        public, rows=station_presentation(job_id,job.summary(),job.window_results)
+        return {**public, "window_results": rows}
 
     @app.get("/api/job/{job_id}/stream")
     async def api_stream(job_id: str):
@@ -2766,8 +2794,32 @@ def create_app():
         if not job:
             raise HTTPException(404, "任务不存在")
 
+        def station_event_view(event):
+            ledger=getattr(job,'_station_ledger',None)
+            if ledger is None or job.profile.get('mode')!='workstation':
+                return event
+            # Queued snapshots can precede a newer hello/poll response or a
+            # manual identity link. Send current state while retaining each
+            # window's original frames, timing and raw model evidence.
+            report=ledger.snapshot()
+            kind=event.get('type')
+            if kind=='window':
+                from .station_identity import canonical_window
+                return canonical_window(event,report['aliases'],{p['person_id'] for p in report['people']})
+            if kind=='alerts':
+                return {**event,'alerts':report['alerts'],'station_time_sec':report['time_sec'],
+                        'analysis_revision':getattr(job,'_analysis_revision','')}
+            if kind=='station':
+                return {**event,'data':{**(event.get('data') or {}),**report,
+                    'model_status':getattr(job,'_station_model_status','等待大模型复核'),
+                    'model_error':getattr(job,'_station_model_error',''),'progress':job.progress}}
+            if isinstance(event.get('summary'),dict):
+                return {**event,'summary':{**event['summary'],'alerts':report['alerts'],
+                        'alarm_history':report['alarm_history']}}
+            return event
+
         async def gen():
-            yield f"data: {json.dumps({'type': 'hello', 'summary': job.summary()}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(station_event_view({'type': 'hello', 'summary': job.summary()}), ensure_ascii=False)}\n\n"
             while True:
                 try:
                     ev = await asyncio.to_thread(job.events.get, True, 25)
@@ -2775,10 +2827,10 @@ def create_app():
                     yield ": keepalive\n\n"
                     if job.state in ("done", "error", "stopped"):
                         # 状态已终态且队列空了，再推一次汇总后收尾
-                        yield f"data: {json.dumps({'type': 'final', 'summary': job.summary()}, ensure_ascii=False)}\n\n"
+                        yield f"data: {json.dumps(station_event_view({'type': 'final', 'summary': job.summary()}), ensure_ascii=False)}\n\n"
                         break
                     continue
-                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps(station_event_view(ev), ensure_ascii=False)}\n\n"
                 if ev.get("type") == "done" or (ev.get("type") == "error"
                                                 and not ev.get("recovering")):
                     break

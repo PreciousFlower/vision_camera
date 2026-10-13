@@ -131,6 +131,33 @@ class AnonymousTracker:
     def __init__(self, max_age=3, gallery_age=8*60*60, gallery_limit=500):
         self.max_age, self.tracks, self.sequence = max_age, {}, 0
         self.gallery_age, self.gallery_limit = gallery_age, gallery_limit
+        self._linked_aliases = {}
+
+    def link_identities(self, aliases):
+        """Apply explicit human links to appearance memory, not only display IDs.
+
+        Otherwise two former track IDs compete in the return gallery after a
+        manual merge and either revive an old ID or mint another pending one.
+        The ledger validates that sightings do not overlap before making a link.
+        """
+        if aliases == self._linked_aliases:
+            return
+        from .station_identity import canonical_id
+        normalized = {}
+        for pid, old in sorted(self.tracks.items(), key=lambda item:item[1]['seen_at']):
+            target = canonical_id(pid, aliases)
+            previous = normalized.get(target)
+            samples = (list(previous.get('_appearance_samples', [])) if previous else []) + list(old.get('_appearance_samples', []))
+            track = dict(old)
+            track['person_id'] = target
+            track['_appearance_samples'] = samples[:1] + samples[1:][-15:]
+            pending = [canonical_id(candidate, aliases) for candidate in track.get('pending_links', [])]
+            track['pending_links'] = list(dict.fromkeys(candidate for candidate in pending if candidate != target))
+            if pid in aliases or target in aliases.values() or (previous and previous.get('identity_status') == 'manual'):
+                track.update(identity_status='manual', pending_links=[])
+            normalized[target] = track
+        self.tracks = normalized
+        self._linked_aliases = dict(aliases)
 
     @staticmethod
     def _color(detection, old):
@@ -243,8 +270,11 @@ class AnonymousTracker:
                     samples.append(list(appearance))
             pending = choices[i] or (old.get('pending_links', []) if old else [])
             track = {**detection, 'person_id': pid, 'seen_at': timestamp, 'velocity': velocity,
-                     '_appearance_samples': samples[-8:], 'pending_links': pending,
-                     'identity_status': 'pending' if pending else 'anonymous',
+                     # Keep the first stable garment view. A rolling tail alone
+                     # forgets it after a sequence of seated/turned poses and
+                     # creates a new identity when that original pose returns.
+                     '_appearance_samples': samples[:1]+samples[1:][-15:], 'pending_links': pending,
+                     'identity_status': 'pending' if pending else 'manual' if old and old.get('identity_status')=='manual' else 'anonymous',
                      'identity_method': methods.get(i, 'new'),
                      'departure_evidence': self._exit_evidence(detection['bbox'], old, velocity)}
             self.tracks[pid] = track

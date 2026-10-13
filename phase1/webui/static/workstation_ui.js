@@ -1,7 +1,7 @@
 /* Preset selection, normalized ROI editor and workstation statistics. */
 class WorkstationUI {
-  constructor({api,flash,onChange,onEditorChange,getJob,isBusy}){
-    Object.assign(this,{api,flash,onChange,onEditorChange,getJob,isBusy});
+  constructor({api,flash,onChange,onEditorChange,onReport,getJob,isBusy}){
+    Object.assign(this,{api,flash,onChange,onEditorChange,onReport,getJob,isBusy});
     this.profiles=[];this.available=false;this.scenes={};this.jobs={};this.reports={};this.timelineViews={};this.request=0;this.polling=false;
     this.dialog=document.querySelector('#station-setup-dialog');this.canvas=document.querySelector('#station-canvas');this.points=[];this.draft=null;this.image=null;this.readOnly=false;
     this.q=id=>document.getElementById(id);
@@ -91,6 +91,7 @@ class WorkstationUI {
     this.q(prefix+'-station-people').innerHTML=(report.people||[]).map((p,i)=>`<tr><td><strong>${this.escape(p.name||p.person_id)}</strong><small>${this.escape(p.person_id)}${p.identity_status==='pending'?' · 待关联':''}</small></td><td><span class="station-state ${p.state==='away'?'away':p.state==='at_station'?'present':'unknown'}">${states[p.state]||'未知'}</span><small>${this.escape(review[p.review_status]||'待复核')}</small></td><td>${this.duration(p.current_duration_sec)}</td><td>${this.duration(p.at_station_sec)}</td><td>${this.duration(p.away_sec)}</td><td title="${this.escape(this.unknownReason(p))}">${this.duration(p.unknown_sec)}${Number(p.unknown_sec)>0?`<small class="station-unknown-reason">${this.escape(this.unknownReason(p))}</small>`:''}</td><td>${this.escape(p.away_count)}</td><td>${this.duration(p.longest_away_sec)}</td><td><button class="btn ghost sm" data-person="${i}">关联 / 命名</button></td></tr>`).join('')||'<tr><td colspan="9" class="muted">尚未观测到可跟踪人员，不会推断某位员工已离岗。</td></tr>';
     this.q(prefix+'-station-people').querySelectorAll('[data-person]').forEach(button=>button.onclick=()=>this.editPerson(kind,report.people[Number(button.dataset.person)]));
     this.renderTimeline(kind,report);
+    this.onReport?.(kind,report);
   }
   renderTimeline(kind,report){
     const prefix=kind==='monitor'?'m':'f',states={at_station:'在岗',away:'离岗',unknown:'未知'};

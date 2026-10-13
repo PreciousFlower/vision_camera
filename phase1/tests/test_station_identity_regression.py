@@ -98,6 +98,33 @@ class StationIdentityRegressionTests(unittest.TestCase):
         tracker.update(25, [])
         self.assertEqual(tracker.tracks, {})
 
+    def test_pose_samples_do_not_forget_first_visit_when_person_returns(self):
+        tracker = AnonymousTracker(max_age=3)
+        tracker.update(0, [person()])
+        # Continuous body motion changes the central crop as arms, skin and
+        # background enter it. The first garment sample remains a valid view;
+        # it must not be discarded merely because more than eight poses arrive.
+        for step in range(1, 21):
+            mix = step / 20
+            result = tracker.update(step * .5, [person(color=(1-mix, mix, 0.))])[0]
+            self.assertEqual(result['person_id'], 'P001')
+        tracker.update(15, [])
+        returned = tracker.update(40, [person()])[0]
+        self.assertEqual(returned['person_id'], 'P001')
+
+    def test_manual_link_unifies_gallery_instead_of_recreating_old_track_id(self):
+        tracker = AnonymousTracker(max_age=3)
+        tracker.update(0, [person()])
+        tracker.update(5, [])
+        later = tracker.update(20, [person(color=(0., 1., 0.))])[0]
+        self.assertEqual(later['person_id'], 'P002')
+        tracker.link_identities({'P002':'P001'})
+        tracker.update(25, [])
+        returned = tracker.update(40, [person(color=(0., 1., 0.))])[0]
+        self.assertEqual(returned['person_id'], 'P001')
+        self.assertEqual(set(tracker.tracks), {'P001'})
+        self.assertEqual(returned['identity_status'], 'manual')
+
     def test_gray_clothing_tolerates_webcam_white_balance_and_background_change(self):
         import numpy as np
         first = np.full((160, 90, 3), (173, 161, 159), dtype=np.uint8)

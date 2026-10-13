@@ -104,11 +104,12 @@ def main():
         page.evaluate('a=>stream.onmessage({data:JSON.stringify({type:"done",summary:{state:"done",alerts:a}})})',alerts)
         page.wait_for_function('!fileRunning&&document.querySelector("#qa-video").value==="fresh"')
         page.locator('#speech-rate').select_option('0.9');page.locator('#speech-test').click()
-        page.wait_for_function('audioPlayed>0&&!speech.active')
-        assert '自然语音' in page.locator('#speech-status').inner_text()
-        speech_fail=True;page.locator('#speech-test').click()
         page.wait_for_function('spoken.length>0&&!speech.active')
-        assert '系统语音' in page.locator('#speech-status').inner_text()
+        assert '标准普通话' in page.locator('#speech-status').inner_text()
+        assert page.evaluate('audioPlayed')==0  # Preview has no neural HTTP wait.
+        speech_fail=True;page.locator('#speech-test').click()
+        page.wait_for_function('spoken.length>1&&!speech.active')
+        assert '标准普通话' in page.locator('#speech-status').inner_text()
         page.locator('aside button[data-tab="cluster"]').click();page.locator('#btn-cluster-check').click()
         page.wait_for_function('document.querySelector("#c-vpn").classList.contains("ok")')
         assert page.locator('#c-vpn .dot').evaluate('e=>getComputedStyle(e).backgroundColor')=='rgb(21, 115, 71)'
@@ -127,7 +128,7 @@ def main():
             page.locator('aside button[data-tab="detect"]').click()
             if width in (1440,390):page.screenshot(path=str(OUT/f'workspace-{width}.png'),full_page=True)
         assert not errors,errors
-        (OUT/'browser.json').write_text(json.dumps({'status':'passed','checks':['upload-analysis-auto-select','history-details','delete-cancel-and-confirm','citation-viewer-XSS','natural-audio-and-fallback','green-connected-and-tunnel','red-alert-and-review-distinction','20-responsive-layouts'],'writes':writes},indent=2),encoding='utf-8')
+        (OUT/'browser.json').write_text(json.dumps({'status':'passed','checks':['upload-analysis-auto-select','history-details','delete-cancel-and-confirm','citation-viewer-XSS','standard-Mandarin-preview-without-network-wait','green-connected-and-tunnel','red-alert-and-review-distinction','20-responsive-layouts'],'writes':writes},indent=2),encoding='utf-8')
         browser.close()
         print('PASS unified video workspace, deletion, speech fallback, semantic colors and responsive layouts')
 
