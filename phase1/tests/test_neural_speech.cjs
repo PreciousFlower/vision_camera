@@ -27,7 +27,7 @@ async function main(){
   speaker.makeAudio=()=>new BrokenAudio();speaker.fetchAudio=async()=>response;speaker.neuralRetryAt=0;speaker.enable(true);
   speaker.notify('five',[alert]);await flush();assert.equal(spoken.length,4); // Error event + rejected play must not speak twice.
   spoken.at(-1).onend();speaker.enable(false);
-  speaker.configure({voice:'neural:unsupported',rate:100,volume:-1});assert.equal(speaker.voice,'auto');assert.equal(speaker.rate,1.15);assert.equal(speaker.volume,0);
+  speaker.configure({voice:'neural:unsupported',rate:100,volume:-1});assert.equal(speaker.voice,'auto');assert.equal(speaker.rate,1.6);assert.equal(speaker.volume,0);
   console.log('PASS legacy neural playback, immediate Mandarin preview, preferences, alert resumption, fallback, cooldown, mute cancellation and error dedup');
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

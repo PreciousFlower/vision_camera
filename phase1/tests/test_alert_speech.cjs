@@ -19,7 +19,8 @@ assert.ok(speaker.queue.length<=8);now+=21000;spoken[3].onend();assert.equal(spe
 speaker.enable(false);speaker.notify('disabled',[alert]);assert.equal(spoken.length,4);assert.ok(cancelled);
 const restored=new AlertSpeech({synth,Utterance,storage});restored.enable(true);restored.notify('a',[alert]);assert.equal(spoken.length,4);restored.enable(false);
 const unsupported=new AlertSpeech({synth:null,Utterance:null,storage});assert.equal(unsupported.enable(true),false);
-speaker.enable(true);speaker.notify('failure',[alert]);spoken.at(-1).onerror();assert.equal(speaker.enabled,false);
+speaker.enable(true);speaker.notify('failure',[alert]);spoken.at(-1).onerror({error:'audio-hardware'});assert.equal(speaker.enabled,false);
+assert.equal(speaker.queue.length,1,'An actual device failure preserves the pending alarm for retry');speaker.enable(false);
 // A live window may expand backwards to include retained context. Identical
 // evidence remains the same notification; a new evidence time is a new event.
 speaker.enable(true);

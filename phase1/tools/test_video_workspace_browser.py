@@ -34,10 +34,10 @@ def main():
         browser = p.chromium.launch(channel='msedge', headless=True)
         page = browser.new_page(viewport={'width':1440,'height':1000}, reduced_motion='reduce')
         page.on('pageerror', lambda error: errors.append(str(error)))
-        page.add_init_script("""window.spoken=[];window.audioPlayed=0;
+        page.add_init_script("""window.spoken=[];window.spokenRates=[];window.audioPlayed=0;
           window.SpeechSynthesisUtterance=class {constructor(text){this.text=text;}};
           Object.defineProperty(window,'speechSynthesis',{value:{getVoices:()=>[{name:'系统女声',lang:'zh-CN',voiceURI:'system'}],
-            addEventListener:()=>{},cancel:()=>{},speak:u=>{spoken.push(u.text);setTimeout(()=>u.onend&&u.onend(),10);}}});
+            addEventListener:()=>{},cancel:()=>{},speak:u=>{spoken.push(u.text);spokenRates.push(u.rate);setTimeout(()=>u.onend&&u.onend(),10);}}});
           window.Audio=class {play(){window.audioPlayed++;setTimeout(()=>this.onended&&this.onended(),20);return Promise.resolve();}pause(){}removeAttribute(){}};
           window.EventSource=class {static CLOSED=2;constructor(url){this.readyState=1;window.stream=this;}close(){}};
         """)
@@ -103,8 +103,9 @@ def main():
         assert page.locator('#windows .alerted').count()==1
         page.evaluate('a=>stream.onmessage({data:JSON.stringify({type:"done",summary:{state:"done",alerts:a}})})',alerts)
         page.wait_for_function('!fileRunning&&document.querySelector("#qa-video").value==="fresh"')
-        page.locator('#speech-rate').select_option('0.9');page.locator('#speech-test').click()
+        page.locator('#speech-rate').select_option('0.75');page.locator('#speech-test').click()
         page.wait_for_function('spoken.length>0&&!speech.active')
+        assert page.evaluate('spokenRates.at(-1)')==.75
         assert '标准普通话' in page.locator('#speech-status').inner_text()
         assert page.evaluate('audioPlayed')==0  # Preview has no neural HTTP wait.
         speech_fail=True;page.locator('#speech-test').click()

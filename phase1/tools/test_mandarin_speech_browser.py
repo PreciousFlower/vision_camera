@@ -56,7 +56,7 @@ def main():
         page.goto("http://speech.test/", wait_until="networkidle")
         assert page.locator("#speech-voice").input_value() == "auto"
         assert page.locator("#speech-voice option").evaluate_all(
-            "options=>options.map(option=>option.value)") == ["auto", "browser:cn", "browser:cn-male"]
+            "options=>options.map(option=>option.value)") == ["auto", "mandarin:female", "mandarin:male", "browser:cn", "browser:cn-male"]
         page.locator("#speech-test").click()
         assert page.evaluate("spoken.length") == 1
         assert page.evaluate("spoken[0].voice.voiceURI") == "cn"
@@ -86,7 +86,9 @@ def main():
 
         page.evaluate("voiceInventory=voiceInventory.filter(voice=>voice.lang!=='zh-CN');refreshSpeechVoices()")
         page.locator("#speech-test").click()
-        assert "未找到标准普通话" in page.locator("#speech-status").inner_text()
+        assert page.locator("#speech-voice").input_value() == "browser:cn-male"
+        assert "所选标准普通话声音暂不可用" in page.locator("#speech-status").inner_text()
+        assert page.evaluate("speech.enabled"), "Loading voices cannot disable real alarm playback"
         assert not synthesis_requests, synthesis_requests
         assert not errors, errors
         browser.close()

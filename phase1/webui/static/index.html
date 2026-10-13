@@ -468,11 +468,11 @@ section.active { display: block; animation: fade .2s ease; }
 <div class="speech-strip">
   <svg class="speech-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="m12 4-6 5H3v6h3l6 5zM16 8c2 2 2 6 0 8M19 5c4 4 4 10 0 14"/></svg>
   <div class="row"><label class="chk"><input type="checkbox" id="speech-enabled" checked> 告警语音播报</label>
-    <div class="speech-options"><label for="speech-voice">声音</label><select id="speech-voice"><option value="auto">标准普通话 · 自动</option></select>
-    <label for="speech-rate">语速</label><select id="speech-rate"><option value="0.9">舒缓</option><option value="1" selected>标准</option><option value="1.1">稍快</option></select></div>
+    <div class="speech-options"><label for="speech-voice">声音</label><select id="speech-voice"><option value="auto">标准普通话 · 自动</option><option value="mandarin:female">标准普通话 · 女声</option><option value="mandarin:male">标准普通话 · 男声</option></select>
+    <label for="speech-rate">语速</label><select id="speech-rate"><option value="0.75">舒缓 · 0.75×</option><option value="1" selected>标准 · 1.0×</option><option value="1.3">稍快 · 1.3×</option><option value="1.5">快速 · 1.5×</option></select></div>
     <label for="speech-volume">音量</label><input id="speech-volume" type="range" min="0" max="1" step="0.1" value="1" style="width:100px">
     <button class="btn ghost sm" id="speech-test">试听音箱</button><span id="speech-status" class="muted" role="status">开始检测或试听后启用，使用当前浏览器的音箱</span>
-    <span class="speech-help">只使用中文（简体，中国）的标准普通话声音；每次试听立即打断并重新播放。</span>
+    <span class="speech-help">使用系统中文（简体，中国）的标准普通话男声或女声；切换声音、语速立即生效，每次试听重新播放。</span>
   </div>
 </div>
 <!-- 摄像头监测 -->
@@ -843,30 +843,46 @@ let uploadMaxBytes=1024*1024*1024;
 let evidenceContext=null,evidenceRequest=0,feedbackLabel=null,feedbackSaving=false;
 let stationsUI=null;
 const stationViews={};
-const speech=new AlertSpeech({onStatus:text=>{$('#speech-status').textContent=text;}});
+const speech=new AlertSpeech({onStatus:text=>{$('#speech-status').textContent=text;},onEnabledChange:value=>{
+  $('#speech-enabled').checked=value;
+  try{localStorage.setItem('civility-speech-enabled',String(value));}catch(e){}
+}});
 const newSpeechRuns=new Set();
 try{$('#speech-enabled').checked=localStorage.getItem('civility-speech-enabled')!=='false';}catch(e){}
 let speechSettings={voice:'auto',rate:1,volume:1};
 try{const saved=JSON.parse(localStorage.getItem('civility-speech-settings')||'{}');if(saved&&typeof saved==='object')speechSettings={...speechSettings,...saved};}catch(e){}
 if(typeof speechSettings.voice!=='string'||speechSettings.voice.startsWith('neural:'))speechSettings.voice='auto';
 speech.configure(speechSettings);
-if(![.9,1,1.1].includes(speech.rate))speech.rate=1;
+if(![.75,1,1.3,1.5].includes(speech.rate))$('#speech-rate').append(new Option('已保存语速 · '+speech.rate.toFixed(2)+'×',String(speech.rate)));
 $('#speech-rate').value=String(speech.rate);$('#speech-volume').value=String(speech.volume);
+function mandarinVoiceLabel(voice){
+  const gender=AlertSpeech.voiceGender(voice);
+  const names=[[/huihui|惠惠|慧慧/i,'惠惠'],[/yaoyao|瑶瑶/i,'瑶瑶'],[/xiaoxiao|曉曉|晓晓/i,'晓晓'],[/xiaoyi|晓伊/i,'晓伊'],[/kangkang|康康/i,'康康'],[/yunxi|云希|雲希/i,'云希'],[/yunyang|云扬|雲揚/i,'云扬'],[/yunjian|云健/i,'云健']];
+  const name=names.find(([pattern])=>pattern.test(voice.name))?.[1]||voice.name;
+  return (gender==='male'?'男声':gender==='female'?'女声':'标准普通话')+' · '+name;
+}
 function refreshSpeechVoices(){
-  const select=$('#speech-voice');select.querySelectorAll('[data-browser-voice]').forEach(option=>option.remove());
+  const select=$('#speech-voice');select.querySelectorAll('[data-browser-voice],[data-pending-voice]').forEach(option=>option.remove());
   const voices=speech.synth?.getVoices()||[];
   for(const voice of voices){
     if(!AlertSpeech.isMandarinVoice(voice))continue;
-    const option=new Option(voice.name,'browser:'+(voice.voiceURI||voice.name));option.dataset.browserVoice='true';select.append(option);
+    const option=new Option(mandarinVoiceLabel(voice),'browser:'+(voice.voiceURI||voice.name));option.title=voice.name;option.dataset.browserVoice='true';select.append(option);
   }
   const available=[...select.options].some(option=>option.value===speech.voice);
-  if(!available&&voices.length)speech.configure({voice:'auto'});
-  select.value=available?speech.voice:'auto';
+  if(!available){const option=new Option(voices.length?'已选普通话声音 · 当前不可用':'已选普通话声音 · 等待加载',speech.voice);option.dataset.pendingVoice='true';select.append(option);}
+  select.value=speech.voice;
 }
 refreshSpeechVoices();speech.synth?.addEventListener?.('voiceschanged',refreshSpeechVoices);
 function saveSpeechSettings(){try{localStorage.setItem('civility-speech-settings',JSON.stringify({voice:speech.voice,rate:speech.rate,volume:speech.volume}));}catch(e){}}
-$('#speech-voice').onchange=()=>{speech.configure({voice:$('#speech-voice').value});speech.neuralRetryAt=0;saveSpeechSettings();};
-$('#speech-rate').onchange=()=>{speech.configure({rate:Number($('#speech-rate').value)});saveSpeechSettings();};
+saveSpeechSettings();
+function changeSpeechSettings(settings){
+  const wasActive=!!speech.active;
+  if($('#speech-enabled').checked&&!speech.enabled)speech.enable(true);
+  speech.configure(settings);saveSpeechSettings();
+  if(!wasActive)speech.test();
+}
+$('#speech-voice').onchange=()=>changeSpeechSettings({voice:$('#speech-voice').value});
+$('#speech-rate').onchange=()=>changeSpeechSettings({rate:Number($('#speech-rate').value)});
 if(!speech.supported){$('#speech-enabled').disabled=true;$('#speech-test').disabled=true;$('#speech-status').textContent='当前浏览器不支持语音播报，请使用 Edge 或 Chrome';}
 function armSpeech(){if($('#speech-enabled').checked&&!speech.enabled&&speech.enable(true))speech.test('语音告警已开启。');}
 $('#speech-enabled').onchange=()=>{try{localStorage.setItem('civility-speech-enabled',$('#speech-enabled').checked);}catch(e){}if($('#speech-enabled').checked)armSpeech();else speech.enable(false);};
